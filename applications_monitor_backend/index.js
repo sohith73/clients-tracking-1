@@ -3338,7 +3338,7 @@ app.post('/api/analytics/client-job-analysis', async (req, res) => {
         ]),
       // 5) Client info — runs in parallel with aggregations (no dependency)
       ClientModel.find({})
-        .select('email name clientNumber planType planPrice status jobStatus operationsName dashboardTeamLeadName isPaused onboardingPhase addons pausedAt')
+        .select('email name clientNumber planType planPrice status jobStatus operationsName dashboardTeamLeadName isPaused onboardingPhase addons pausedAt clientCountry')
         .lean()
     ]);
 
@@ -3385,6 +3385,7 @@ app.post('/api/analytics/client-job-analysis', async (req, res) => {
       isPaused: !!c.isPaused,
       onboardingPhase: !!c.onboardingPhase,
       pausedAt: c.pausedAt != null ? new Date(c.pausedAt).toISOString() : null,
+      clientCountry: c.clientCountry === 'USA' || c.clientCountry === 'Canada' ? c.clientCountry : null,
       addonLimit: (c.addons || []).reduce((sum, a) => {
         const v = parseInt(a.type || a.addonType || 0, 10);
         return sum + (isNaN(v) ? 0 : v);
@@ -3427,6 +3428,7 @@ app.post('/api/analytics/client-job-analysis', async (req, res) => {
           onboardingPhase: client.onboardingPhase ?? false,
           pausedAt: client.pausedAt ?? null
         }),
+        clientCountry: client.clientCountry ?? null,
         dashboardTeamLeadName: client.dashboardTeamLeadName || '',
         lastAppliedOperatorName: lastAppliedOperatorMap.get(email.toLowerCase()) || '',
         referrals: referralMeta.referrals || [],
@@ -4111,9 +4113,52 @@ const updateClientNumber = async (req, res) => {
   }
 };
 
+/** PATCH /api/clients/:email/client-country — Body: { clientCountry: 'USA' | 'Canada' | null }; null clears. Admin only. */
+const updateClientCountry = async (req, res) => {
+  try {
+    const { email } = req.params;
+    const raw = req.body?.clientCountry;
+    const emailLower = (email || '').toLowerCase().trim();
+    if (!emailLower) return res.status(400).json({ error: 'Email is required' });
+
+    const updatedAt = new Date().toLocaleString('en-US', 'Asia/Kolkata');
+    let client;
+    if (raw === '' || raw === null || raw === undefined) {
+      client = await ClientModel.findOneAndUpdate(
+        { email: emailLower },
+        { $unset: { clientCountry: '' }, $set: { updatedAt } },
+        { new: true }
+      ).select('email clientCountry').lean();
+    } else {
+      const v = String(raw).trim();
+      if (!['USA', 'Canada'].includes(v)) {
+        return res.status(400).json({ error: 'clientCountry must be USA or Canada' });
+      }
+      client = await ClientModel.findOneAndUpdate(
+        { email: emailLower },
+        { $set: { clientCountry: v, updatedAt } },
+        { new: true }
+      ).select('email clientCountry').lean();
+    }
+
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+
+    clearAnalysisCache();
+    res.status(200).json({
+      success: true,
+      clientCountry: client.clientCountry ?? null,
+      message: 'Client country updated',
+    });
+  } catch (error) {
+    console.error('updateClientCountry:', error);
+    res.status(500).json({ error: error.message || 'Failed to update client country' });
+  }
+};
+
 app.post('/api/clients', optionalVerifyToken, createOrUpdateClient);
 app.post('/api/clients/addnumbers', addNumbersToClients);
 app.patch('/api/clients/:email/client-number', verifyToken, verifyAdmin, updateClientNumber);
+app.patch('/api/clients/:email/client-country', verifyToken, verifyAdmin, updateClientCountry);
 app.post('/api/clients/sync-client-numbers', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const synced = await syncClientNumbersToOnboardingJobs();

@@ -48,6 +48,7 @@ export default function ClientJobAnalysis() {
   const [savingDashboardManager, setSavingDashboardManager] = useState(new Set());
   const [savingStatus, setSavingStatus] = useState(new Set());
   const [savingPause, setSavingPause] = useState(new Set());
+  const [savingCountry, setSavingCountry] = useState(new Set());
   // Scrape-column state: per-email count inputs, in-flight set, inline errors.
   const [scrapeCountByEmail, setScrapeCountByEmail] = useState({});
   const [scrapingEmails, setScrapingEmails] = useState(new Set());
@@ -330,6 +331,43 @@ export default function ClientJobAnalysis() {
         const next = new Set(prev);
         next.delete(email);
         return next;
+      });
+    }
+  };
+
+  const handleCountryChange = async (email, clientCountry) => {
+    if (userRole !== 'admin') {
+      toast.error('Only admins can change country');
+      return;
+    }
+    setSavingCountry((prev) => new Set(prev).add(email));
+    try {
+      const body =
+        clientCountry === '' || clientCountry == null
+          ? { clientCountry: null }
+          : { clientCountry };
+      const resp = await fetch(`${API_BASE}/api/clients/${encodeURIComponent(email)}/client-country`, {
+        method: 'PATCH',
+        headers: AUTH_HEADERS(),
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || 'Failed to save');
+      const next =
+        data.clientCountry === 'USA' || data.clientCountry === 'Canada'
+          ? data.clientCountry
+          : null;
+      setRows((prev) =>
+        prev.map((r) => (r.email === email ? { ...r, clientCountry: next } : r)),
+      );
+      toast.success('Country updated');
+    } catch (e) {
+      toast.error(e.message || 'Failed to update country');
+    } finally {
+      setSavingCountry((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(email);
+        return nextSet;
       });
     }
   };
@@ -623,6 +661,7 @@ export default function ClientJobAnalysis() {
               <tr>
                 <th className="px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-700">Client</th>
                 <th className="px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-700">Status</th>
+                <th className="px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-700">Country</th>
                 <th className="px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-700">Pause/Unpause/New</th>
                 <th className="px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-700">Paused</th>
                 <th className="px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-700">Plan</th>
@@ -694,6 +733,7 @@ export default function ClientJobAnalysis() {
                   <tr key={`skel-${i}`} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                     <td className="px-2 py-2"><div className="space-y-1.5"><div className="h-3.5 bg-gray-200 rounded animate-pulse w-28" /><div className="h-2.5 bg-gray-100 rounded animate-pulse w-36" /></div></td>
                     <td className="px-2 py-2"><div className="h-5 bg-gray-200 rounded animate-pulse w-16" /></td>
+                    <td className="px-2 py-2"><div className="h-5 bg-gray-200 rounded animate-pulse w-14" /></td>
                     <td className="px-2 py-2"><div className="h-5 bg-gray-200 rounded animate-pulse w-20" /></td>
                     <td className="px-2 py-2"><div className="h-5 bg-amber-200/80 rounded animate-pulse w-14" /></td>
                     <td className="px-2 py-2"><div className="h-5 bg-gray-200 rounded animate-pulse w-16" /></td>
@@ -714,7 +754,7 @@ export default function ClientJobAnalysis() {
                 ))
               ) : processedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={isAdmin ? 16 : 15} className="px-2 py-8 text-center text-gray-500 text-sm">
+                  <td colSpan={isAdmin ? 17 : 16} className="px-2 py-8 text-center text-gray-500 text-sm">
                     {lastAppliedByFilter ? 'No clients found for selected operator' : 'No data'}
                   </td>
                 </tr>
@@ -785,6 +825,31 @@ export default function ClientJobAnalysis() {
                       ) : (
                         <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-semibold bg-green-100 text-green-700">
                           Active
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1">
+                      {userRole === 'admin' ? (
+                        <select
+                          value={
+                            r.clientCountry === 'USA' || r.clientCountry === 'Canada'
+                              ? r.clientCountry
+                              : ''
+                          }
+                          onChange={(e) => handleCountryChange(r.email, e.target.value)}
+                          disabled={savingCountry.has(r.email)}
+                          className="px-2 py-1 text-[11px] border border-slate-300 rounded-md bg-white shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed min-w-[88px]"
+                          title="Client region"
+                        >
+                          <option value="">—</option>
+                          <option value="USA">USA</option>
+                          <option value="Canada">Canada</option>
+                        </select>
+                      ) : (
+                        <span className="text-[11px] text-slate-700">
+                          {r.clientCountry === 'USA' || r.clientCountry === 'Canada'
+                            ? r.clientCountry
+                            : '—'}
                         </span>
                       )}
                     </td>
