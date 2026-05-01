@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { hasLinkedInOptimization, planFeatureLabel } from '../utils/planFeatures';
 import { parseAmount, extractCurrency, formatAmount, getCurrencyPrefix } from '../utils/currencyUtils';
+import ClientAiSummary from './ClientAiSummary';
 
 const API_BASE = import.meta.env.VITE_BASE;
 
-const ClientDetails = ({ clientEmail, onClose, userRole = 'admin', onStatusUpdate }) => {
+const ClientDetails = ({ clientEmail, onClose, userRole = 'admin', onStatusUpdate, initialSection = 'personal' }) => {
   const [client, setClient] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [activeSection, setActiveSection] = useState('personal');
+  const [activeSection, setActiveSection] = useState(initialSection);
   const [currency, setCurrency] = useState('$');
   const [formData, setFormData] = useState({
     name: '',
@@ -303,8 +304,18 @@ const ClientDetails = ({ clientEmail, onClose, userRole = 'admin', onStatusUpdat
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
         </svg>
       )
+    },
+    {
+      id: 'ai-summary',
+      label: 'AI Summary',
+      adminOnly: true,
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        </svg>
+      )
     }
-  ];
+  ].filter((it) => !it.adminOnly || userRole === 'admin');
 
   if (loading && !client) {
     return (
@@ -833,6 +844,10 @@ const ClientDetails = ({ clientEmail, onClose, userRole = 'admin', onStatusUpdat
                   </div>
                 </div>
               </div>
+            )}
+
+            {activeSection === 'ai-summary' && userRole === 'admin' && (
+              <ClientAiSummary clientEmail={clientEmail} />
             )}
 
             {/* Record Information - Always visible */}

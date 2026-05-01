@@ -15,7 +15,10 @@ const RegisterClient = () => {
     dashboardManager: '',
     amountPaid: '',
     currency: '$',
-    clientNumber: ''
+    clientNumber: '',
+    // Max number of jobs operators can push for this client. Enforced by
+    // dashboard /addjob via ProfileModel.targetJobCount. Empty = no cap.
+    targetJobCount: ''
   });
 
   const [dashboardManagers, setDashboardManagers] = useState([]);
@@ -25,6 +28,7 @@ const RegisterClient = () => {
   const [showForm, setShowForm] = useState(false);
 
   const [response, setResponse] = useState({});
+  const [lastRegisteredEmail, setLastRegisteredEmail] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -226,6 +230,9 @@ const RegisterClient = () => {
     if (res.ok) {
       toastUtils.dismissToast(loadingToast);
       toastUtils.success("Client registered successfully!");
+      // Remember the registered client so we can show a "Build AI Summary →"
+      // CTA in the success banner below the form.
+      setLastRegisteredEmail(formData.email.toLowerCase());
       
       try {
         const MICROSERVICE_URL = import.meta.env.VITE_MICROSERVICE_URL || 'http://localhost:5000';
@@ -260,6 +267,32 @@ const RegisterClient = () => {
         // Don't fail the main registration if microservice call fails
       }
 
+      // Sync target-job-count cap to the dashboard backend's ProfileModel
+      // so /addjob can enforce it. Best-effort — registration already
+      // succeeded; this is a follow-up.
+      const targetVal = formData.targetJobCount?.toString().trim();
+      if (targetVal !== '' && targetVal != null) {
+        try {
+          const dashboardBase = import.meta.env.VITE_DASHBOARD_BASE || 'http://localhost:8086';
+          const n = Number.parseInt(targetVal, 10);
+          if (Number.isInteger(n) && n >= 0 && n <= 10000) {
+            const r = await fetch(`${dashboardBase.replace(/\/+$/, '')}/update-target-jobs`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: formData.email.toLowerCase(),
+                targetJobCount: n,
+              }),
+            });
+            if (!r.ok) {
+              console.warn('targetJobCount sync to dashboard failed:', r.status, await r.text().catch(() => ''));
+            }
+          }
+        } catch (e) {
+          console.warn('targetJobCount sync threw:', e?.message);
+        }
+      }
+
       setFormData({
         firstName: "",
         lastName: "",
@@ -272,6 +305,7 @@ const RegisterClient = () => {
         amountPaid: "",
         currency: "$",
         clientNumber: "",
+        targetJobCount: "",
       });
       setErrors({});
       setShowForm(false);
@@ -380,6 +414,34 @@ const RegisterClient = () => {
             Add New Client
           </button>
         </div>
+
+        {/* Post-registration banner — quick-jump to AI Summary tab */}
+        {lastRegisteredEmail && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 bg-gradient-to-r from-emerald-50 to-blue-50 border border-emerald-300 rounded-xl p-4 shadow-sm">
+            <div>
+              <p className="text-sm font-semibold text-emerald-900">
+                ✓ Client registered: <span className="font-mono">{lastRegisteredEmail}</span>
+              </p>
+              <p className="text-xs text-emerald-700 mt-1">
+                Build the AI candidate summary now so the JR-Direct extension grader can use it.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <a
+                href={`/ai-summaries?clientEmail=${encodeURIComponent(lastRegisteredEmail)}`}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
+              >
+                ✨ Open AI Summary →
+              </a>
+              <button
+                onClick={() => setLastRegisteredEmail('')}
+                className="px-3 py-2 bg-white border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors text-sm"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Simple Clients Grid */}
         {loadingClients ? (
@@ -636,6 +698,25 @@ const RegisterClient = () => {
                     />
                     <p className="text-xs text-gray-500 mt-1">This number will be used for the client and onboarding ticket. Leave empty to auto-generate.</p>
                     {errors.clientNumber && <p className="text-red-500 text-xs mt-1">{errors.clientNumber}</p>}
+                  </div>
+
+                  {/* Target Job Count cap */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Max jobs to push <span className="text-gray-500 text-xs">(operator cap)</span>
+                    </label>
+                    <input
+                      type="number"
+                      name="targetJobCount"
+                      value={formData.targetJobCount}
+                      onChange={handleInputChange}
+                      placeholder="e.g. 50  (empty = no cap)"
+                      min="0"
+                      max="10000"
+                      step="5"
+                      className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-amber-500 focus:border-amber-500 border-gray-300"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Caps the total number of jobs operators (scraper + extension) can push to this client's tracker. Once reached, /addjob refuses with TARGET_REACHED. Leave empty for no cap.</p>
                   </div>
 
                   {/* Submit Button */}

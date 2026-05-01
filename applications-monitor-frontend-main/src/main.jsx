@@ -29,6 +29,7 @@ const ClientPreferences = React.lazy(() => import('./components/ClientPreference
 const OperatorsPerformanceReport = React.lazy(() => import('./components/OperatorsPerformanceReport.jsx'));
 const ExtensionJobsReport = React.lazy(() => import('./components/ExtensionJobsReport.jsx'));
 const ClientOnboarding = React.lazy(() => import('./components/ClientOnboarding.jsx'));
+const AdminSummariesPage = React.lazy(() => import('./components/AdminSummariesPage.jsx'));
 
 // Minimal fallback shown while a route chunk loads
 const RouteFallback = () => (
@@ -58,7 +59,8 @@ const router = createBrowserRouter([
       { path: '/client-preferences', element: <Lazy><ClientPreferences /></Lazy> },
       { path: '/client-onboarding', element: <Lazy><ClientOnboarding /></Lazy> },
       { path: '/operators-performance-report', element: <Lazy><OperatorsPerformanceReport /></Lazy> },
-      { path: '/extension-jobs-report', element: <Lazy><ExtensionJobsReport /></Lazy> }
+      { path: '/extension-jobs-report', element: <Lazy><ExtensionJobsReport /></Lazy> },
+      { path: '/ai-summaries', element: <Lazy><AdminSummariesPage /></Lazy> }
     ]
   }
 ]);

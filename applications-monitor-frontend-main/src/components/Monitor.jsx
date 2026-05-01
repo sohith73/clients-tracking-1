@@ -1416,6 +1416,7 @@ export default function Monitor({ onClose }) {
   const [showClients, setShowClients] = useState(!isOperationsIntern);
   const [showClientDetails, setShowClientDetails] = useState(false);
   const [clientDetailsEmail, setClientDetailsEmail] = useState('');
+  const [clientDetailsSection, setClientDetailsSection] = useState('personal');
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState(null);
@@ -1757,6 +1758,24 @@ const [clientsPostFilter, setClientsPostFilter] = useState([]);
     }
   }, [performanceDate, performanceEndDate, operations.length]);
 
+  // Deep-link: ?clientEmail=foo@bar.com&section=ai-summary auto-opens
+  // ClientDetails on the requested section. Used by RegisterClient's
+  // "Open AI Summary →" action and by the JR-direct extension's
+  // "Edit in Clients-Tracking" button.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const email = params.get('clientEmail');
+      const section = params.get('section') || 'personal';
+      if (email && !showClientDetails) {
+        setClientDetailsEmail(email);
+        setClientDetailsSection(section);
+        setShowClientDetails(true);
+      }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Effect to fetch client details and jobs when selectedClient changes
   useEffect(() => {
     if (selectedClient) {
@@ -2036,11 +2055,12 @@ const inactiveClients = clientsPostFilter.filter(c => c.status?.toLowerCase() ==
 
   if (showClientDetails) {
   return (
-      <ClientDetails 
-        clientEmail={clientDetailsEmail} 
+      <ClientDetails
+        clientEmail={clientDetailsEmail}
         onClose={handleCloseClientDetails}
         userRole={userRole}
         onStatusUpdate={refreshClients}
+        initialSection={clientDetailsSection}
       />
     );
   }
@@ -2240,6 +2260,12 @@ const inactiveClients = clientsPostFilter.filter(c => c.status?.toLowerCase() ==
                   className="px-3 py-2 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors font-medium"
                 >
                   Client Onboarding
+                </button>
+                <button
+                  onClick={() => navigate('/ai-summaries')}
+                  className={`px-3 py-2 text-sm bg-fuchsia-600 text-white rounded-lg hover:bg-fuchsia-700 transition-colors font-medium ${['team_lead', 'operations_intern'].includes(navUser?.role) ? 'hidden' : ''}`}
+                >
+                  AI Summaries
                 </button>
               </>
             );
