@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { CalendarOff, Send } from "lucide-react";
 import { useAttendance } from "./useAttendance";
-import { AttendancePage, Badge, Button, Card, EmptyState, ErrorMessage, Field, LeaveStatusBadge, Notice, Skeleton, inputClass } from "./shared";
-import { LEAVE_TYPES, cap, formatRange } from "./format";
+import { AttendancePage, Badge, Button, Card, EmptyState, ErrorMessage, Field, LeaveStatusBadge, Notice, Skeleton, StatTile, inputClass } from "./shared";
+import { LEAVE_TYPES, cap, formatRange, istToday } from "./format";
 
 const EMPTY = { type: "casual", fromDate: "", toDate: "", halfDay: false, reason: "" };
 
@@ -11,6 +11,16 @@ export default function MyLeaves() {
   const [form, setForm] = useState(EMPTY);
   const [sent, setSent] = useState(false);
   const sameDay = form.fromDate && form.fromDate === form.toDate;
+  const year = istToday().slice(0, 4);
+  const totals = (api.data?.leaves || []).reduce(
+    (sum, l) => {
+      if (!l.fromDate.startsWith(year)) return sum;
+      if (l.status === "pending") sum.pending += l.dayCount;
+      if (l.status === "approved") sum[l.payType === "unpaid" ? "unpaid" : l.payType === "paid" ? "paid" : "unset"] += l.dayCount;
+      return sum;
+    },
+    { paid: 0, unpaid: 0, unset: 0, pending: 0 },
+  );
   const set = (name, value) => {
     setSent(false);
     setForm((prev) => {
@@ -23,6 +33,14 @@ export default function MyLeaves() {
 
   return (
     <AttendancePage title="My leaves" subtitle="Request time off. An admin approves it and marks it paid or unpaid.">
+      {api.data && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatTile label={`Paid leave in ${year}`} value={totals.paid} tone="text-blue-700" hint="days approved" />
+          <StatTile label={`Unpaid leave in ${year}`} value={totals.unpaid} tone="text-orange-700" hint="days approved" />
+          <StatTile label="Waiting for approval" value={totals.pending} tone="text-amber-700" hint="days requested" />
+          <StatTile label="Pay not set yet" value={totals.unset} tone="text-violet-700" hint="approved, admin has not chosen" />
+        </div>
+      )}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,380px)_1fr] items-start">
         <Card title="Request leave">
           <form

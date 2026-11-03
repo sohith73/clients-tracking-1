@@ -42,11 +42,15 @@ function dateRange(leave) {
   return `${fmt(leave.fromDate)} to ${fmt(leave.toDate)}`;
 }
 const days = (n) => `${n} ${n === 1 ? "day" : "days"}`;
-export function appUrl(request) {
+// Links in the emails open the portal's frontend, never the API host the request came in on.
+// APP_URL or FRONTEND_URL win; otherwise the first CORS_ORIGIN (the frontend), then the production frontend.
+export function appUrl() {
+  const fromCors = process.env.CORS_ORIGIN?.split(",")[0]?.trim();
   return (
     process.env.APP_URL?.trim() ||
     process.env.FRONTEND_URL?.trim() ||
-    `${request.protocol}://${request.get("host")}`
+    fromCors ||
+    "https://dashboardtracking.vercel.app"
   ).replace(/\/$/, "");
 }
 function render(c) {
@@ -127,7 +131,7 @@ function leaveLines(leave) {
   ];
 }
 export function notifyLeaveRequested(request, leave) {
-  const base = appUrl(request);
+  const base = appUrl();
   schedule(request, "leave_requested", async () => {
     const to = await adminEmails([leave.user.id]);
     await deliver(
@@ -146,7 +150,7 @@ export function notifyLeaveRequested(request, leave) {
   });
 }
 export function notifyLeaveWithdrawn(request, leave) {
-  const base = appUrl(request);
+  const base = appUrl();
   schedule(request, "leave_withdrawn", async () => {
     const to = await adminEmails([leave.user.id]);
     await deliver(
@@ -165,7 +169,7 @@ export function notifyLeaveWithdrawn(request, leave) {
   });
 }
 export function notifyLeaveDecision(request, leave, action, actor) {
-  const base = appUrl(request);
+  const base = appUrl();
   const pay = leave.payType
     ? leave.payType === "paid"
       ? "Paid"
@@ -209,7 +213,7 @@ export function notifyLeaveDecision(request, leave, action, actor) {
             note,
             cta: {
               label: "See my leave",
-              url: `${base}/attendance/leaves`,
+              url: `${base}/attendance`,
             },
           }),
           `leave_${action}_employee`,

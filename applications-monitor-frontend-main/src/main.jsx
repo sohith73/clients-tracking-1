@@ -1,5 +1,5 @@
 import React from 'react';
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 import App, { AttendanceRoute } from './App';
@@ -40,8 +40,9 @@ const router = createBrowserRouter([
     element: <App />,
     children: [
       { path: "*", element: <p>Page not found.</p> },
-      { path: "/attendance", element: <AttendanceRoute page="today" /> },
-      { path: "/attendance/leaves", element: <AttendanceRoute page="leaves" /> },
+      { path: "/attendance", element: <AttendanceRoute page="leaves" /> },
+      { path: "/attendance/today", element: <AttendanceRoute page="today" /> },
+      { path: "/attendance/leaves", element: <Navigate to="/attendance" replace /> },
       { path: "/attendance/admin", element: <AttendanceRoute page="admin" admin /> },
       { path: "/attendance/admin/leaves", element: <AttendanceRoute page="approvals" admin /> },
       { path: "/attendance/admin/grid", element: <AttendanceRoute page="grid" admin /> },

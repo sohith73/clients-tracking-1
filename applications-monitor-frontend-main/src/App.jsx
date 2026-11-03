@@ -136,7 +136,7 @@ function App() {
 
   if (!user) return <Login onLogin={handleLogin} />;
   if (user.role === 'bda') {
-    if (!['/attendance', '/attendance/leaves'].includes(location.pathname)) return <Navigate to="/attendance" replace />;
+    if (!['/attendance', '/attendance/leaves', '/attendance/today'].includes(location.pathname)) return <Navigate to="/attendance" replace />;
     return (
       <>
         <header className="bg-white shadow-sm border-b">
@@ -144,7 +144,7 @@ function App() {
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center text-white font-bold text-sm" aria-hidden="true">F</div>
               <div>
-                <h1 className="text-lg font-semibold text-gray-900">FlashFire Attendance</h1>
+                <h1 className="text-lg font-semibold text-gray-900">FlashFire Leaves</h1>
                 <p className="text-sm text-gray-600">{user.name || user.email}</p>
               </div>
             </div>
@@ -207,7 +207,7 @@ function App() {
                     {location.pathname === "/admin-dashboard" ? "Monitor Clients" : "Admin Dashboard"}
                   </button>
                 </Link>
-                <Link className="px-4 py-2 bg-blue-600 text-white rounded-lg" to={user.role === 'admin' ? '/attendance/admin' : '/attendance'}>Attendance</Link>
+                <Link className="px-4 py-2 bg-blue-600 text-white rounded-lg" to={user.role === 'admin' ? '/attendance/admin/leaves' : '/attendance'}>Leaves</Link>
                 <ConnectGmailButton />
                 <button
                   onClick={handleLogout}
@@ -305,7 +305,7 @@ function App() {
                   </button>
                 </Link>
               )}
-              <Link className="px-4 py-2 bg-blue-600 text-white rounded-lg" to={user.role === 'admin' ? '/attendance/admin' : '/attendance'}>Attendance</Link>
+              <Link className="px-4 py-2 bg-blue-600 text-white rounded-lg" to={user.role === 'admin' ? '/attendance/admin/leaves' : '/attendance'}>Leaves</Link>
                 <ConnectGmailButton />
               <button
                 onClick={handleLogout}

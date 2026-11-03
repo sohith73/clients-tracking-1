@@ -25,7 +25,7 @@ export default function AttendanceToday() {
   const days = calendar.data?.person?.days;
 
   return (
-    <AttendancePage title="Attendance" subtitle="Check in when you start and check out when you finish. Times are in IST.">
+    <AttendancePage title="Check-in" subtitle="Optional for now. Leaves are what the team tracks. Times are in IST.">
       <ErrorMessage error={today.error || calendar.error} />
 
       <Card

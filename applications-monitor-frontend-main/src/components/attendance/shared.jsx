@@ -12,19 +12,26 @@ export const labelClass = "block text-sm font-medium text-slate-700 mb-1.5";
 export function AttendancePage({ title, subtitle, admin = false, actions, children }) {
   const { user } = useOutletContext();
   if (admin && user?.role !== "admin") return <Navigate to="/attendance" replace />;
+  const isAdmin = user?.role === "admin";
+  // Leaves come first. The check-in side of attendance is kept but sits behind a divider for now.
   const tabs = [
-    { to: "/attendance", label: "Today", end: true },
-    { to: "/attendance/leaves", label: "My leaves" },
-    ...(user?.role === "admin"
+    { to: "/attendance", label: "Leaves", end: true },
+    ...(isAdmin
       ? [
-          { to: "/attendance/admin", label: "Overview", end: true },
           { to: "/attendance/admin/leaves", label: "Approvals" },
-          { to: "/attendance/admin/grid", label: "Grid" },
           { to: "/attendance/admin/people", label: "People" },
           { to: "/attendance/admin/settings", label: "Settings" },
         ]
       : []),
+    { to: "/attendance/today", label: "Check-in", secondary: true },
+    ...(isAdmin
+      ? [
+          { to: "/attendance/admin", label: "Overview", end: true, secondary: true },
+          { to: "/attendance/admin/grid", label: "Grid", secondary: true },
+        ]
+      : []),
   ];
+  const firstSecondary = tabs.findIndex((tab) => tab.secondary);
   return (
     <main className="min-h-screen bg-slate-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -38,13 +45,13 @@ export function AttendancePage({ title, subtitle, admin = false, actions, childr
         <nav aria-label="Attendance" className="border-b border-slate-200 max-sm:overflow-x-auto [scrollbar-width:none]">
           <ul className="flex gap-1 sm:min-w-0 max-sm:min-w-max">
             {tabs.map((tab, index) => (
-              <li key={tab.to} className={user?.role === "admin" && index === 2 ? "ml-4 pl-4 border-l border-slate-200" : ""}>
+              <li key={tab.to} className={index === firstSecondary ? "ml-4 pl-4 border-l border-slate-200" : ""}>
                 <NavLink
                   to={tab.to}
                   end={tab.end}
                   className={({ isActive }) =>
                     `inline-flex items-center h-10 px-3 text-sm font-medium border-b-2 -mb-px transition-colors duration-200 ${FOCUS} ${
-                      isActive ? "border-blue-600 text-blue-700" : "border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300"
+                      isActive ? "border-blue-600 text-blue-700" : `border-transparent hover:border-slate-300 ${tab.secondary ? "text-slate-500 hover:text-slate-800" : "text-slate-600 hover:text-slate-900"}`
                     }`
                   }
                 >
