@@ -46,6 +46,7 @@ const router = createBrowserRouter([
       { path: "/attendance/admin/leaves", element: <AttendanceRoute page="approvals" admin /> },
       { path: "/attendance/admin/grid", element: <AttendanceRoute page="grid" admin /> },
       { path: "/attendance/admin/settings", element: <AttendanceRoute page="settings" admin /> },
+      { path: "/attendance/admin/people", element: <AttendanceRoute page="people" admin /> },
       { element: <Lazy><Monitor /></Lazy>, index: true },
       { path: '/clients/new', element: <Lazy><Monitor /></Lazy> },
       { path: '/monitor', element: <Lazy><Monitor /></Lazy> },

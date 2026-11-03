@@ -4,6 +4,7 @@ export const toPublicUser = (user) => ({
   name: user.name || user.email,
   email: user.email,
   role: user.role,
+  designation: user.designation || "",
   isActive: user.isActive,
 });
 export async function requireUser(request) {

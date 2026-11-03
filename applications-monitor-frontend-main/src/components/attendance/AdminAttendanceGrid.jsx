@@ -3,7 +3,7 @@ import { Download, Save } from "lucide-react";
 import { useAttendance } from "./useAttendance";
 import { AttendancePage, Avatar, Button, EmptyState, ErrorMessage, Field, Modal, Skeleton, inputClass, Card } from "./shared";
 import { Legend, MonthNav } from "./parts";
-import { WEEKDAYS, cap, currentMonth, dayStyle, formatDay, formatTime, weekdayOf } from "./format";
+import { WEEKDAYS, roleLabel, currentMonth, dayStyle, formatDay, formatTime, weekdayOf } from "./format";
 
 // A cell starting with = + - @ would run as a formula when the CSV opens in a spreadsheet, so it is prefixed with a quote.
 const csvCell = (value) => {
@@ -92,7 +92,7 @@ export default function AdminAttendanceGrid() {
                         <Avatar name={person.user.name} />
                         <span className="min-w-0">
                           <span className="block truncate text-sm font-medium text-slate-900">{person.user.name}</span>
-                          <span className="block truncate text-[11px] text-slate-500">{cap(person.user.role)}</span>
+                          <span className="block truncate text-[11px] text-slate-500">{person.user.designation || roleLabel(person.user.role)}</span>
                         </span>
                       </span>
                     </th>

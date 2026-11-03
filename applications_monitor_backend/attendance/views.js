@@ -85,7 +85,7 @@ export async function loadMonth(users, month, settings) {
   }
   const holidayByDay = new Map(settings.holidays.map((h) => [h.date, h.name]));
   return users.map((user) => {
-    const joinedDay = dayKey(user._id.getTimestamp());
+    const joinedDay = user.joinedOn || dayKey(user._id.getTimestamp());
     const cells = days.map((day) => {
       const record = recordByKey.get(`${user._id}:${day}`);
       const leave = leaveByKey.get(`${user._id}:${day}`);

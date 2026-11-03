@@ -21,9 +21,9 @@ export function useAttendance(path) {
     setBusy(true);
     setError(null);
     try {
-      await apiFetch(`/api/attendance/${url}`, { method, body });
+      const result = await apiFetch(`/api/attendance/${url}`, { method, body });
       setVersion((v) => v + 1);
-      return true;
+      return result || true;
     } catch (e) {
       setError(e);
       return false;

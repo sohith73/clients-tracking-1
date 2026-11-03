@@ -336,6 +336,7 @@ const attendanceComponents = {
   approvals: React.lazy(() => import('./components/attendance/AdminLeaves.jsx')),
   grid: React.lazy(() => import('./components/attendance/AdminAttendanceGrid.jsx')),
   settings: React.lazy(() => import('./components/attendance/AdminAttendanceSettings.jsx')),
+  people: React.lazy(() => import('./components/attendance/AdminPeople.jsx')),
 };
 export function AttendanceRoute({ page, admin = false }) {
   const user = JSON.parse(localStorage.getItem('user') || '{}');

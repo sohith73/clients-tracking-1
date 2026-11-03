@@ -88,3 +88,16 @@ export const LEAVE_TYPES = [
   { value: "personal", label: "Personal" },
   { value: "other", label: "Other" },
 ];
+
+export const ROLES = [
+  { value: "bda", label: "BDA", hint: "Sees the attendance pages only." },
+  { value: "team_lead", label: "Team lead", hint: "Client job analysis, extension and performance reports, plus attendance." },
+  { value: "operations_intern", label: "Operations", hint: "Operators performance report, plus attendance." },
+  { value: "onboarding_team", label: "Onboarding", hint: "Client onboarding, plus attendance." },
+  { value: "csm", label: "CSM", hint: "Client onboarding and job analysis, plus attendance." },
+  { value: "admin", label: "Admin", hint: "Full access. Approves leave and manages people." },
+];
+
+export const roleLabel = (value) => ROLES.find((r) => r.value === value)?.label || cap(value);
+
+export const DESIGNATIONS = ["Software Developer", "Senior Software Developer", "Frontend Developer", "Backend Developer", "QA Engineer", "Designer", "Business Development Associate", "Operations Executive", "Team Lead", "Customer Success Manager", "HR", "Intern"];
