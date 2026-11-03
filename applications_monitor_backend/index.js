@@ -2151,9 +2151,7 @@ const login = async (req, res) => {
     const rolesRequiringSecondStep = ['bda', 'team_lead', 'operations_intern', 'onboarding_team', 'csm', 'admin'];
     if (rolesRequiringSecondStep.includes(user.role)) {
       let secondStepOk = false;
-      if (trustToken === 'bypass-testing') {
-        secondStepOk = true;
-      } else if (trustToken) {
+      if (trustToken) {
         try {
           const decoded = jwt.verify(trustToken, JWT_SECRET);
           if (decoded.purpose === 'otp-trust' && decoded.email === emailLower) {

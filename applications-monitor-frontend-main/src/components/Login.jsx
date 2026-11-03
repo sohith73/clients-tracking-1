@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 
 const API_BASE = import.meta.env.VITE_BASE || 'http://localhost:8001';
 
@@ -21,31 +21,6 @@ export default function Login({ onLogin }) {
   const [otpSent, setOtpSent] = useState(false);
   const [sendingOtp, setSendingOtp] = useState(false);
   const [rememberFor30Days, setRememberFor30Days] = useState(true);
-  const holdTimerRef = useRef(null);
-
-  const handleOtpBypass = () => {
-    setLoading(true);
-    setError('');
-    fetch(`${API_BASE}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: formData.email,
-        password: formData.password,
-        trustToken: 'bypass-testing'
-      })
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.token) {
-          completeLogin(data.token, data.user);
-        } else {
-          setError(data.error || 'Bypass failed');
-        }
-      })
-      .catch(() => setError('Network error'))
-      .finally(() => setLoading(false));
-  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -376,11 +351,6 @@ export default function Login({ onLogin }) {
                 <button
                   type="button"
                   onClick={handleRequestOtp}
-                  onMouseDown={() => { holdTimerRef.current = setTimeout(handleOtpBypass, 5000); }}
-                  onMouseUp={() => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }}
-                  onMouseLeave={() => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }}
-                  onTouchStart={() => { holdTimerRef.current = setTimeout(handleOtpBypass, 5000); }}
-                  onTouchEnd={() => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }}
                   disabled={sendingOtp}
                   className="w-full py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50"
                 >
