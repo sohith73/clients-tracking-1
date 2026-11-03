@@ -64,7 +64,7 @@ export const toPerson = (user) => ({
   designation: user.designation || "",
   joinedOn: user.joinedOn || null,
   onboardingSubRole: user.onboardingSubRole ?? null,
-  isActive: user.isActive !== false,
+  isActive: user.isActive === true,
   createdAt: user._id.getTimestamp().toISOString(),
 });
 
@@ -108,11 +108,11 @@ export const PATCH = route(async (request, ctx) => {
   const user = await findPerson(id);
   const isSelf = String(user._id) === String(admin._id);
 
-  const losesAdmin = user.role === "admin" && user.isActive !== false && (input.isActive === false || (input.role && input.role !== "admin"));
+  const losesAdmin = user.role === "admin" && user.isActive === true && (input.isActive === false || (input.role && input.role !== "admin"));
   if (isSelf && input.isActive === false) throw new HttpError(403, "You cannot turn off your own account");
   if (isSelf && input.role && input.role !== "admin") throw new HttpError(403, "You cannot remove your own admin access");
   if (losesAdmin) {
-    const others = await User.countDocuments({ role: "admin", isActive: { $ne: false }, _id: { $ne: user._id } });
+    const others = await User.countDocuments({ role: "admin", isActive: true, _id: { $ne: user._id } });
     if (others === 0) throw new HttpError(409, "This is the last active admin");
   }
 

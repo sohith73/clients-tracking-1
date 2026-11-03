@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { requireAdmin } from "../auth.js";
 import { ok, readJson, route } from "../http.js";
-import { Settings } from "../models.js";
+import { Leave, Settings } from "../models.js";
 import { getSettings } from "../settings.js";
-import { isDayKey } from "../time.js";
+import { nonWorking } from "../rules.js";
+import { addDays, dayKey, isDayKey } from "../time.js";
 const body = z.object({
   weeklyOffDays: z
     .array(z.number().int().min(0).max(6))
@@ -40,6 +41,40 @@ export const GET = route(async (request) => {
     settings: await getSettings(),
   });
 });
+/**
+ * A leave freezes its day list when it is requested. When a holiday or weekly off is added later,
+ * drop those days from pending and approved leaves so nobody is charged leave on a day off.
+ * A request left with no days is cancelled. Removing a holiday never adds days back.
+ */
+async function reconcileLeaves(settings) {
+  const leaves = await Leave.find({
+    status: { $in: ["pending", "approved"] },
+    toDate: { $gte: addDays(dayKey(), -90) },
+  }).lean();
+  let adjusted = 0;
+  for (const leave of leaves) {
+    const days = leave.days.filter((day) => !nonWorking(day, settings));
+    if (days.length === leave.days.length) continue;
+    adjusted += 1;
+    if (days.length === 0) {
+      await Leave.updateOne(
+        { _id: leave._id },
+        {
+          $set: {
+            status: "cancelled",
+            decisionNote: "Cancelled automatically: every date is now a holiday or weekly off.",
+          },
+        },
+      );
+    } else {
+      await Leave.updateOne(
+        { _id: leave._id },
+        { $set: { days, dayCount: leave.halfDay ? 0.5 : days.length } },
+      );
+    }
+  }
+  return adjusted;
+}
 export const PUT = route(async (request) => {
   await requireAdmin(request);
   const input = await readJson(request, body);
@@ -52,7 +87,10 @@ export const PUT = route(async (request) => {
       $set: input,
     },
   );
+  const settings = await getSettings();
+  const adjustedLeaves = await reconcileLeaves(settings);
   return ok({
-    settings: await getSettings(),
+    settings,
+    adjustedLeaves,
   });
 });

@@ -1,13 +1,14 @@
 import { useState } from "react";
-import { CalendarOff, Send } from "lucide-react";
+import { CalendarOff, PartyPopper, Send } from "lucide-react";
 import { useAttendance } from "./useAttendance";
 import { AttendancePage, Badge, Button, Card, EmptyState, ErrorMessage, Field, LeaveStatusBadge, Notice, Skeleton, StatTile, inputClass } from "./shared";
-import { LEAVE_TYPES, cap, formatRange, istToday } from "./format";
+import { LEAVE_TYPES, WEEKDAYS, cap, formatDay, formatRange, istToday } from "./format";
 
 const EMPTY = { type: "casual", fromDate: "", toDate: "", halfDay: false, reason: "" };
 
 export default function MyLeaves() {
   const api = useAttendance("leaves");
+  const days = useAttendance("holidays");
   const [form, setForm] = useState(EMPTY);
   const [sent, setSent] = useState(false);
   const sameDay = form.fromDate && form.fromDate === form.toDate;
@@ -97,6 +98,23 @@ export default function MyLeaves() {
         </Card>
 
         <div className="space-y-3">
+          {days.data && (days.data.holidays.length > 0 || days.data.weeklyOffDays.length > 0) && (
+            <Card title="Company holidays" description={`Weekly off: ${days.data.weeklyOffDays.map((d) => WEEKDAYS[d]).join(", ") || "none"}. These days never count as leave.`}>
+              {days.data.holidays.length === 0 ? (
+                <p className="text-sm text-slate-600">No upcoming holidays marked.</p>
+              ) : (
+                <ul className="-my-1.5 divide-y divide-slate-100">
+                  {days.data.holidays.slice(0, 5).map((h) => (
+                    <li key={h.date} className="flex items-center gap-3 py-2">
+                      <PartyPopper className="size-4 shrink-0 text-amber-600" aria-hidden="true" />
+                      <span className="text-sm font-medium text-slate-900">{h.name}</span>
+                      <span className="ml-auto text-xs tabular-nums text-slate-600">{formatDay(h.date)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          )}
           <h2 className="text-lg font-semibold text-slate-900">Your requests</h2>
           {!api.data ? (
             <Skeleton className="h-28 w-full" />

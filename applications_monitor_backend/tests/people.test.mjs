@@ -138,3 +138,71 @@ test("reset password returns a new one-time password that replaces the old hash"
   assert.ok(await bcrypt.compare(reset.temporaryPassword, after.password));
   assert.equal((await call(admin, `/admin/people/${new mongoose.Types.ObjectId()}/reset-password`, "POST")).status, 404);
 });
+
+test("adding a holiday removes that day from pending and approved leaves, and cancels a leave that is left empty", async () => {
+  const { Leave, Settings } = await import("../attendance/models.js");
+  await Settings.deleteMany({});
+  const start = (() => {
+    let d = addDays(dayKey(), 10);
+    while (new Date(`${d}T00:00:00Z`).getUTCDay() === 0) d = addDays(d, 1);
+    return d;
+  })();
+  const next = addDays(start, 1);
+  const noOff = [0];
+  const mk = (extra) => ({ user: lead._id, type: "casual", reason: "test reason", ...extra });
+  const [multi, single, half, rejected] = await Leave.create([
+    mk({ fromDate: start, toDate: next, days: [start, next], dayCount: 2, status: "approved", payType: "paid" }),
+    mk({ fromDate: addDays(start, 5), toDate: addDays(start, 5), days: [addDays(start, 5)], dayCount: 1, status: "pending" }),
+    mk({ fromDate: addDays(start, 8), toDate: addDays(start, 8), days: [addDays(start, 8)], dayCount: 0.5, halfDay: true, status: "pending" }),
+    mk({ fromDate: addDays(start, 11), toDate: addDays(start, 11), days: [addDays(start, 11)], dayCount: 1, status: "rejected" }),
+  ]);
+  const holidays = [start, addDays(start, 5), addDays(start, 11)].sort().map((date) => ({ date, name: "Holiday" }));
+  const saved = await call(admin, "/admin/settings", "PUT", { weeklyOffDays: noOff, holidays });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.adjustedLeaves, 2);
+  const after = Object.fromEntries((await Leave.find({ _id: { $in: [multi._id, single._id, half._id, rejected._id] } }).lean()).map((l) => [String(l._id), l]));
+  assert.deepEqual(after[multi._id].days, [next]);
+  assert.equal(after[multi._id].dayCount, 1);
+  assert.equal(after[multi._id].status, "approved");
+  assert.equal(after[single._id].status, "cancelled");
+  assert.match(after[single._id].decisionNote, /holiday/i);
+  assert.equal(after[half._id].dayCount, 0.5);
+  assert.equal(after[rejected._id].status, "rejected");
+  const again = await call(admin, "/admin/settings", "PUT", { weeklyOffDays: noOff, holidays: holidays.slice(0, 1) });
+  assert.equal(again.adjustedLeaves, 0);
+  assert.deepEqual((await Leave.findById(multi._id).lean()).days, [next]);
+});
+
+test("everyone signed in can read upcoming holidays, only admins can change them", async () => {
+  const { Settings } = await import("../attendance/models.js");
+  await Settings.deleteMany({});
+  const soon = addDays(dayKey(), 7);
+  const old = addDays(dayKey(), -7);
+  assert.equal((await call(lead, "/admin/settings", "PUT", { weeklyOffDays: [0], holidays: [] })).status, 403);
+  assert.equal((await call(admin, "/admin/settings", "PUT", { weeklyOffDays: [0, 6], holidays: [{ date: old, name: "Old" }, { date: soon, name: "Founders day" }] })).status, 200);
+  const seen = await call(lead, "/holidays");
+  assert.equal(seen.status, 200);
+  assert.deepEqual(seen.holidays, [{ date: soon, name: "Founders day" }]);
+  assert.deepEqual(seen.weeklyOffDays, [0, 6]);
+});
+
+test("accounts created before this feature (no designation, joining date or name) keep working", async () => {
+  // Raw insert, the way old users look in the collection: none of the new fields exist.
+  const legacyId = new mongoose.Types.ObjectId();
+  await UserModel.collection.insertOne({ _id: legacyId, email: "legacy@example.test", password: await bcrypt.hash("old-password", 10), role: "team_lead", isActive: true, createdAt: "1/2/2025, 10:00:00 AM", updatedAt: "1/2/2025, 10:00:00 AM" });
+  const legacy = await UserModel.findById(legacyId).lean();
+  assert.equal((await call(legacy, "/today")).status, 200);
+  assert.equal((await call(legacy, "/holidays")).status, 200);
+  const people = await call(admin, "/admin/people");
+  const row = people.people.find((p) => p.email === "legacy@example.test");
+  assert.equal(row.isActive, true);
+  assert.equal(row.designation, "");
+  assert.equal(row.joinedOn, null);
+  const grid = await call(admin, "/admin/attendance");
+  const cell = grid.people.find((p) => p.user.email === "legacy@example.test");
+  assert.ok(cell, "legacy user is in the grid");
+  assert.equal(cell.user.name, "legacy@example.test");
+  // The original login still verifies the old password hash.
+  assert.ok(await bcrypt.compare("old-password", legacy.password));
+  assert.equal((await call(admin, `/admin/people/${legacyId}`, "PATCH", { designation: "Engineer", joinedOn: "2025-01-02" })).status, 200);
+});

@@ -20,7 +20,7 @@ export function AttendancePage({ title, subtitle, admin = false, actions, childr
       ? [
           { to: "/attendance/admin/leaves", label: "Approvals" },
           { to: "/attendance/admin/people", label: "People" },
-          { to: "/attendance/admin/settings", label: "Settings" },
+          { to: "/attendance/admin/settings", label: "Holidays" },
         ]
       : []),
     { to: "/attendance/today", label: "Check-in", secondary: true },
