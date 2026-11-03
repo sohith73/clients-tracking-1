@@ -81,7 +81,7 @@ export default function Login({ onLogin }) {
 
       setUserRole(data.role);
 
-      const rolesRequiringSecondStep = ['team_lead', 'operations_intern', 'onboarding_team', 'csm', 'admin'];
+      const rolesRequiringSecondStep = ['bda', 'team_lead', 'operations_intern', 'onboarding_team', 'csm', 'admin'];
       const needSecondStep = data.needSecondStep === true || (data.role && rolesRequiringSecondStep.includes(data.role));
 
       if (needSecondStep) {
@@ -115,7 +115,7 @@ export default function Login({ onLogin }) {
                 }
               }
             }
-          } catch (_) {}
+          } catch { /* A stale trust token falls back to OTP. */ }
         }
 
         const storedKey = localStorage.getItem('portalSessionKey');
@@ -139,7 +139,7 @@ export default function Login({ onLogin }) {
                 return;
               }
             }
-          } catch (_) {}
+          } catch { /* A stale trust token falls back to OTP. */ }
         }
 
         setStep(2);
@@ -157,7 +157,7 @@ export default function Login({ onLogin }) {
           setError(loginData.error || 'Login failed');
         }
       }
-    } catch (err) {
+    } catch {
       setError('Network error. Please try again.');
     } finally {
       setLoading(false);
@@ -180,7 +180,7 @@ export default function Login({ onLogin }) {
       } else {
         setError(data.error || 'Failed to send OTP');
       }
-    } catch (err) {
+    } catch {
       setError('Network error');
     } finally {
       setSendingOtp(false);
@@ -229,7 +229,7 @@ export default function Login({ onLogin }) {
       } else {
         setError(data.error || 'Invalid or expired OTP');
       }
-    } catch (err) {
+    } catch {
       setError('Network error');
     } finally {
       setLoading(false);
@@ -265,7 +265,7 @@ export default function Login({ onLogin }) {
       } else {
         setError(data.error || 'Invalid session key');
       }
-    } catch (err) {
+    } catch {
       setError('Network error. Please try again.');
     } finally {
       setLoading(false);

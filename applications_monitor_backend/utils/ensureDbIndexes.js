@@ -1,3 +1,4 @@
+import { Attendance, Leave, Settings } from '../attendance/models.js';
 /**
  * Run after mongoose.connect() succeeds. Index creation must not run at model import time
  * or Mongoose buffers operations and can throw "buffering timed out after 10000ms" when the DB is slow/unreachable.
@@ -13,6 +14,13 @@ import { TagReminderModel } from '../TagReminderModel.js';
 
 export async function ensureDbIndexes() {
   await Promise.all([
+    Attendance.collection.createIndex({ user: 1, date: 1 }, { unique: true }),
+    Attendance.collection.createIndex({ date: 1 }),
+    Leave.collection.createIndex({ user: 1, fromDate: -1 }),
+    Leave.collection.createIndex({ status: 1, createdAt: -1 }),
+    Leave.collection.createIndex({ days: 1, status: 1 }),
+    Leave.collection.createIndex({ user: 1, days: 1 }, { unique: true, partialFilterExpression: { status: { $in: ["pending", "approved"] } } }),
+    Settings.collection.createIndex({ key: 1 }, { unique: true }),
     JobModel.collection.createIndex({ createdAt: 1 }),
     JobModel.collection.createIndex({ appliedDate: 1 }),
     JobModel.collection.createIndex({ dateAdded: 1 }),

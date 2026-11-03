@@ -1,7 +1,8 @@
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import Login from './components/Login';
 import ConnectGmailButton from './components/ConnectGmailButton.jsx';
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import PortalNav from './components/PortalNav.jsx';
+import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { startTokenRefresh, stopTokenRefresh } from './utils/tokenRefresh';
 
 // Lazy so the chat bundle (framer-motion etc.) never blocks first paint
@@ -16,6 +17,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const location = useLocation();
   const navigate = useNavigate();
+  const initialPath = useRef(location.pathname);
 // console.log(user)
   // ✅ Check for logged-in user on mount
   useEffect(() => {
@@ -28,8 +30,10 @@ function App() {
         setUser(userData);
 
         // Only redirect from root path - run once on mount
-        if (location.pathname === '/') {
-          if (userData.role === 'admin') {
+        if (initialPath.current === '/') {
+          if (userData.role === 'bda') {
+            navigate('/attendance');
+          } else if (userData.role === 'admin') {
             navigate('/admin-dashboard');
           } else if (userData.role === 'operations_intern') {
             navigate('/operators-performance-report');
@@ -53,7 +57,7 @@ function App() {
       }
     }
     setLoading(false);
-  }, []);
+  }, [navigate]);
 
   // ✅ Redirect admin automatically once (prevents infinite loop)
   // useEffect(() => {
@@ -95,7 +99,9 @@ function App() {
     setUser(userData);
 
     // Navigate based on user role
-    if (userData.role === 'admin') {
+    if (userData.role === 'bda') {
+      navigate('/attendance');
+    } else if (userData.role === 'admin') {
       navigate('/admin-dashboard');
     } else if (userData.role === 'operations_intern') {
       navigate('/operators-performance-report');
@@ -129,6 +135,31 @@ function App() {
   }
 
   if (!user) return <Login onLogin={handleLogin} />;
+  if (user.role === 'bda') {
+    if (!['/attendance', '/attendance/leaves'].includes(location.pathname)) return <Navigate to="/attendance" replace />;
+    return (
+      <>
+        <header className="bg-white shadow-sm border-b">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between py-3">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center text-white font-bold text-sm" aria-hidden="true">F</div>
+              <div>
+                <h1 className="text-lg font-semibold text-gray-900">FlashFire Attendance</h1>
+                <p className="text-sm text-gray-600">{user.name || user.email}</p>
+              </div>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="h-10 px-4 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-600 focus-visible:ring-offset-2"
+            >
+              Logout
+            </button>
+          </div>
+        </header>
+        <Outlet context={{ user, userRole: user.role }} />
+      </>
+    );
+  }
 
   // ===============================
   // ✅ Admin Layout (with Navbar)
@@ -176,6 +207,7 @@ function App() {
                     {location.pathname === "/admin-dashboard" ? "Monitor Clients" : "Admin Dashboard"}
                   </button>
                 </Link>
+                <Link className="px-4 py-2 bg-blue-600 text-white rounded-lg" to={user.role === 'admin' ? '/attendance/admin' : '/attendance'}>Attendance</Link>
                 <ConnectGmailButton />
                 <button
                   onClick={handleLogout}
@@ -187,6 +219,7 @@ function App() {
             </div>
           </div>
         </div>
+        <PortalNav user={user} />
         <Outlet context={{ user, userRole: user?.role }} />
         <Suspense fallback={null}>
           <ChatWidget user={user} />
@@ -272,7 +305,8 @@ function App() {
                   </button>
                 </Link>
               )}
-              <ConnectGmailButton />
+              <Link className="px-4 py-2 bg-blue-600 text-white rounded-lg" to={user.role === 'admin' ? '/attendance/admin' : '/attendance'}>Attendance</Link>
+                <ConnectGmailButton />
               <button
                 onClick={handleLogout}
                 className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-sm"
@@ -283,6 +317,7 @@ function App() {
           </div>
         </div>
       </div>
+      <PortalNav user={user} />
       <Outlet context={{ user, userRole: user?.role }} />
       <Suspense fallback={null}>
         <ChatWidget user={user} />
@@ -293,3 +328,18 @@ function App() {
 
 export default App;
 
+
+const attendanceComponents = {
+  today: React.lazy(() => import('./components/attendance/AttendanceToday.jsx')),
+  leaves: React.lazy(() => import('./components/attendance/MyLeaves.jsx')),
+  admin: React.lazy(() => import('./components/attendance/AdminAttendanceDashboard.jsx')),
+  approvals: React.lazy(() => import('./components/attendance/AdminLeaves.jsx')),
+  grid: React.lazy(() => import('./components/attendance/AdminAttendanceGrid.jsx')),
+  settings: React.lazy(() => import('./components/attendance/AdminAttendanceSettings.jsx')),
+};
+export function AttendanceRoute({ page, admin = false }) {
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  if (admin && user.role !== 'admin') return <Navigate to="/attendance" replace />;
+  const Component = attendanceComponents[page];
+  return <Suspense fallback={<p>Loading attendance...</p>}><Component /></Suspense>;
+}

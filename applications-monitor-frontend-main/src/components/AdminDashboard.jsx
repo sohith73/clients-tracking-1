@@ -389,6 +389,7 @@ export default function AdminDashboard() {
                     <option value="operations_intern">Operations Intern</option>
                     <option value="onboarding_team">Onboarding Team</option>
                     <option value="csm">CSM</option>
+                    <option value="bda">BDA (attendance only)</option>
                   </select>
                 </div>
                 {newUser.role === 'onboarding_team' && (
@@ -486,7 +487,7 @@ export default function AdminDashboard() {
                               ? 'bg-emerald-100 text-emerald-800'
                               : 'bg-blue-100 text-blue-800'
                           }`}>
-                            {user.role === 'operations_intern' ? 'Operations Intern' : user.role === 'team_lead' ? 'Team Lead' : user.role === 'onboarding_team' ? 'Onboarding' : user.role === 'csm' ? 'CSM' : user.role}
+                            {user.role === 'operations_intern' ? 'Operations Intern' : user.role === 'team_lead' ? 'Team Lead' : user.role === 'onboarding_team' ? 'Onboarding' : user.role === 'csm' ? 'CSM' : user.role === 'bda' ? 'BDA' : user.role}
                           </span>
                           {user.role === 'onboarding_team' && user.onboardingSubRole && (
                             <span className="inline-flex px-2 py-0.5 text-xs rounded bg-slate-100 text-slate-700">
@@ -508,7 +509,7 @@ export default function AdminDashboard() {
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        {['team_lead', 'operations_intern', 'onboarding_team', 'csm'].includes(user.role) ? (
+                        {['bda', 'team_lead', 'operations_intern', 'onboarding_team', 'csm'].includes(user.role) ? (
                           <div className="flex items-center gap-2">
                             {sessionKeys[user.email] ? (
                               <div className="flex items-center gap-2">
@@ -561,7 +562,7 @@ export default function AdminDashboard() {
                               Change Password
                             </button>
                           )}
-                          {['team_lead', 'operations_intern', 'onboarding_team', 'csm'].includes(user.role) && (
+                          {['bda', 'team_lead', 'operations_intern', 'onboarding_team', 'csm'].includes(user.role) && (
                             <button
                               onClick={() => generateSessionKey(user.email)}
                               disabled={loadingSessionKey[user.email]}
@@ -570,7 +571,7 @@ export default function AdminDashboard() {
                               {loadingSessionKey[user.email] ? 'Generating...' : 'New Key'}
                             </button>
                           )}
-                          {['team_lead', 'operations_intern', 'onboarding_team', 'csm'].includes(user.role) && (
+                          {['bda', 'team_lead', 'operations_intern', 'onboarding_team', 'csm'].includes(user.role) && (
                             <button
                               onClick={() => deleteUser(user._id, user.email)}
                               className="text-red-600 hover:text-red-800 text-xs ml-2"

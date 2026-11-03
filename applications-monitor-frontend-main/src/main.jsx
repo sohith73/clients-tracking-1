@@ -2,7 +2,7 @@ import React from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import ReactDOM from 'react-dom/client';
 import './index.css';
-import App from './App';
+import App, { AttendanceRoute } from './App';
 import { Lazy } from './components/RouteFallback.jsx';
 
 // Log unhandled promise rejections with clear prefix. Many "message channel closed" errors come from
@@ -39,6 +39,13 @@ const router = createBrowserRouter([
     path: '/',
     element: <App />,
     children: [
+      { path: "*", element: <p>Page not found.</p> },
+      { path: "/attendance", element: <AttendanceRoute page="today" /> },
+      { path: "/attendance/leaves", element: <AttendanceRoute page="leaves" /> },
+      { path: "/attendance/admin", element: <AttendanceRoute page="admin" admin /> },
+      { path: "/attendance/admin/leaves", element: <AttendanceRoute page="approvals" admin /> },
+      { path: "/attendance/admin/grid", element: <AttendanceRoute page="grid" admin /> },
+      { path: "/attendance/admin/settings", element: <AttendanceRoute page="settings" admin /> },
       { element: <Lazy><Monitor /></Lazy>, index: true },
       { path: '/clients/new', element: <Lazy><Monitor /></Lazy> },
       { path: '/monitor', element: <Lazy><Monitor /></Lazy> },
