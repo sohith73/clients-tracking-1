@@ -14,11 +14,15 @@ export const UserSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ["admin", "team_lead", "operations_intern", "onboarding_team", "csm"],
+    enum: ["admin", "team_lead", "operations_intern", "onboarding_team", "csm", "bda"],
     required: true,
     default: "team_lead"
   },
   name: { type: String, trim: true, default: "" },
+  // Job title shown in People ("Software Developer"). Separate from role, which decides portal access.
+  designation: { type: String, trim: true, maxlength: 60, default: "" },
+  // First working day as YYYY-MM-DD (IST). Attendance treats earlier days as "before joining".
+  joinedOn: { type: String, default: null },
   otpEmail: { type: String, trim: true, lowercase: true, default: "" },
   // Personal Discord channel webhook — tag notifications + unresolved-comment
   // reminders are posted here when set.

@@ -1,5 +1,5 @@
 // src/components/AdminLogin.jsx
-import React, { useState, useRef } from "react";
+import React, { useState } from "react";
 
 const API_BASE_URL = import.meta.env.VITE_BASE;
 
@@ -12,36 +12,6 @@ export default function AdminLogin() {
   const [otpStep, setOtpStep] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [rememberFor30Days, setRememberFor30Days] = useState(true);
-  const holdTimerRef = useRef(null);
-
-  function handleOtpBypass() {
-    setLoading(true);
-    setError("");
-    fetch(`${API_BASE_URL}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: form.email,
-        password: form.password,
-        trustToken: "bypass-testing"
-      })
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.token) {
-          localStorage.setItem("ff_admin_jwt", data.token);
-          localStorage.setItem("authToken", data.token);
-          localStorage.setItem("user", JSON.stringify(data.user));
-          setMe(data.user);
-          setOtpStep(false);
-          setOtpSent(false);
-        } else {
-          setError(data.error || "Bypass failed");
-        }
-      })
-      .catch(() => setError("Network error"))
-      .finally(() => setLoading(false));
-  }
 
   function handleChange(e) {
     const { name, value } = e.target;
@@ -211,11 +181,6 @@ export default function AdminLogin() {
             <button
               type="button"
               onClick={handleRequestOtp}
-              onMouseDown={() => { holdTimerRef.current = setTimeout(handleOtpBypass, 5000); }}
-              onMouseUp={() => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }}
-              onMouseLeave={() => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }}
-              onTouchStart={() => { holdTimerRef.current = setTimeout(handleOtpBypass, 5000); }}
-              onTouchEnd={() => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }}
               disabled={sendingOtp}
               style={{
                 width: "100%",

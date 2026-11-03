@@ -1,3 +1,4 @@
+import { attendanceRouter } from './attendance/router.js';
 import express from 'express';
 import Stripe from 'stripe';
 import compression from 'compression';
@@ -2147,12 +2148,10 @@ const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const rolesRequiringSecondStep = ['team_lead', 'operations_intern', 'onboarding_team', 'csm', 'admin'];
+    const rolesRequiringSecondStep = ['bda', 'team_lead', 'operations_intern', 'onboarding_team', 'csm', 'admin'];
     if (rolesRequiringSecondStep.includes(user.role)) {
       let secondStepOk = false;
-      if (trustToken === 'bypass-testing') {
-        secondStepOk = true;
-      } else if (trustToken) {
+      if (trustToken) {
         try {
           const decoded = jwt.verify(trustToken, JWT_SECRET);
           if (decoded.purpose === 'otp-trust' && decoded.email === emailLower) {
@@ -2301,7 +2300,7 @@ const generateSessionKey = async (req, res) => {
 
     const user = await UserModel.findOne({
       email: userEmail.toLowerCase(),
-      role: { $in: ['team_lead', 'operations_intern', 'onboarding_team', 'csm'] },
+      role: { $in: ['bda', 'team_lead', 'operations_intern', 'onboarding_team', 'csm'] },
       isActive: true
     }).lean();
 
@@ -2500,7 +2499,7 @@ const verifyCredentials = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const rolesRequiringSecondStep = ['team_lead', 'operations_intern', 'onboarding_team', 'csm'];
+    const rolesRequiringSecondStep = ['bda', 'team_lead', 'operations_intern', 'onboarding_team', 'csm'];
     const needSecondStep = rolesRequiringSecondStep.includes(user.role);
 
     res.status(200).json({
@@ -3119,6 +3118,8 @@ const deleteClient = async (req, res) => {
 // Authentication routes
 app.post('/api/auth/verify-credentials', verifyCredentials);
 app.post('/api/auth/login', login);
+app.use('/api/attendance', attendanceRouter);
+
 app.post('/api/auth/refresh', verifyToken, refreshToken);
 app.post('/api/auth/request-otp', requestOtp);
 app.post('/api/auth/verify-otp', verifyOtp);

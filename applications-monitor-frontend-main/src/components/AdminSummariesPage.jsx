@@ -1910,12 +1910,43 @@ function UkSponsorCard({ email }) {
 
 // "US H-1B sponsors only" (dashboard backend Utils/usVisaSponsor.js). Same
 // shape as UkSponsorCard; the sponsor data is held in the backend's memory,
-// built from US Department of Labor H-1B filings (ellis.com + flexapply.org).
+// built from US Department of Labor H-1B, E-3 and green card filings
+// (ellis.com + flexapply.org). The backend also reads each posting and refuses
+// one that says it will not sponsor; the optional description box tests that.
+const US_POSTING_REFUSAL = {
+    NO_SPONSORSHIP: 'says it will not sponsor',
+    CITIZENS_ONLY: 'is for US citizens or green card holders only',
+    CLEARANCE: 'requires an active US security clearance',
+};
+
+function usLookupMessage(lookup, matchLabel) {
+    if (lookup.error) return lookup.error;
+    if (!lookup.sponsor) {
+        if (lookup.reason === 'TOO_FEW_FILINGS') {
+            return <>✗ <strong>{lookup.name}</strong> has filed only {lookup.h1bFilings} work-visa {lookup.h1bFilings === 1 ? 'application' : 'applications'} ever ({lookup.recentH1b} in the last year). Too few to count as a sponsor. Would be blocked.</>;
+        }
+        if (lookup.reason === 'NO_RECENT_H1B') {
+            const last = lookup.lastH1bFiling ? `an H-1B on ${lookup.lastH1bFiling}` : `a green card case on ${lookup.lastPermFiling}`;
+            return <>✗ <strong>{lookup.name}</strong> last filed {last}. Would be blocked.</>;
+        }
+        return <>✗ No H-1B or green card filings found. Would be blocked.</>;
+    }
+    const evidence = lookup.basis === 'PERM'
+        ? `files green cards: ${lookup.permFilings.toLocaleString()} certified, last ${lookup.lastPermFiling}`
+        : `last H-1B ${lookup.lastH1bFiling}${lookup.recentH1b ? ` · ${lookup.recentH1b.toLocaleString()} in the last year` : ''}`;
+    const how = matchLabel[lookup.match] || 'match';
+    if (lookup.posting?.refuses) {
+        return <>✗ <strong>{lookup.name}</strong> sponsors ({how} · {evidence}), but this posting {US_POSTING_REFUSAL[lookup.posting.kind]}: “{lookup.posting.quote}”. Would be blocked.</>;
+    }
+    return <>✓ Sponsor: <strong>{lookup.name}</strong> ({how}) · {evidence}{lookup.posting ? '. The posting does not refuse sponsorship.' : ''}</>;
+}
+
 function UsSponsorCard({ email }) {
     const [status, setStatus] = useState(null);
     const [loadError, setLoadError] = useState('');
     const [saving, setSaving] = useState(false);
     const [company, setCompany] = useState('');
+    const [description, setDescription] = useState('');
     const [lookup, setLookup] = useState(null);
     const [lookingUp, setLookingUp] = useState(false);
 
@@ -1936,6 +1967,7 @@ function UsSponsorCard({ email }) {
         setStatus(null);
         setLookup(null);
         setCompany('');
+        setDescription('');
         load();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [email]);
@@ -1967,7 +1999,11 @@ function UsSponsorCard({ email }) {
         if (!q) return;
         setLookingUp(true);
         try {
-            const r = await fetch(`${DASHBOARD_BASE}/us-visa-sponsors/lookup?company=${encodeURIComponent(q)}`);
+            const r = await fetch(`${DASHBOARD_BASE}/us-visa-sponsors/lookup`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ company: q, description }),
+            });
             const body = await r.json().catch(() => null);
             if (!r.ok || !body?.success) throw new Error(body?.message || `HTTP ${r.status}`);
             setLookup(body);
@@ -2000,9 +2036,10 @@ function UsSponsorCard({ email }) {
                         🇺🇸 US H-1B sponsors only
                     </h3>
                     <p className="text-xs text-slate-500 mt-1">
-                        When on, only jobs from employers that filed an H-1B since {since || 'the cutoff'} are added
-                        for <strong>this client</strong> (US Department of Labor filings). Everything else is refused
-                        by the backend and shows as <em>blocked</em> in the extension, without using the daily cap.
+                        When on, only jobs from employers that keep filing H-1Bs or green cards (US Department of
+                        Labor filings since {since || 'the cutoff'}) are added for <strong>this client</strong>, and
+                        never a posting that says it will not sponsor or needs US citizenship. Everything else is
+                        refused by the backend and shows as <em>blocked</em> in the extension, without using the daily cap.
                     </p>
                 </div>
                 <button
@@ -2055,26 +2092,32 @@ function UsSponsorCard({ email }) {
                         {lookingUp ? 'Checking…' : 'Check'}
                     </button>
                 </div>
+                <label htmlFor={`us-sponsor-jd-${email}`} className="block mt-3 text-[10px] uppercase tracking-wide font-bold text-slate-500">
+                    Job description <span className="normal-case font-normal text-slate-400">(optional, to test the posting too)</span>
+                </label>
+                <textarea
+                    id={`us-sponsor-jd-${email}`}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Paste the posting to check for “we are unable to sponsor”"
+                    rows={3}
+                    maxLength={60000}
+                    className="mt-1.5 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
+                />
                 {lookup && (
-                    <div className={`mt-2 text-xs rounded-lg px-3 py-2 border ${
+                    <div role="status" className={`mt-2 text-xs rounded-lg px-3 py-2 border ${
                         lookup.error ? 'bg-red-50 text-red-800 border-red-200'
-                            : lookup.sponsor ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            : lookup.sponsor && !lookup.posting?.refuses ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                                 : 'bg-amber-50 text-amber-800 border-amber-200'
                     }`}>
-                        {lookup.error
-                            ? lookup.error
-                            : lookup.sponsor
-                                ? <>✓ Sponsor: <strong>{lookup.name}</strong> ({matchLabel[lookup.match] || 'match'}) · last H-1B {lookup.lastH1bFiling}{lookup.recentH1b ? ` · ${lookup.recentH1b.toLocaleString()} filed in the last year` : ''}</>
-                                : lookup.reason === 'NO_RECENT_H1B'
-                                    ? <>✗ <strong>{lookup.name}</strong> last filed an H-1B on {lookup.lastH1bFiling}. Would be blocked.</>
-                                    : <>✗ No H-1B filings found. Would be blocked.</>}
+                        {usLookupMessage(lookup, matchLabel)}
                     </div>
                 )}
             </form>
 
             <div className="mt-3 text-[10px] text-slate-400">
                 {data.loaded
-                    ? `${data.employers.toLocaleString()} H-1B employers loaded on the server · data built ${data.builtAt ? new Date(data.builtAt).toLocaleDateString() : 'unknown'}`
+                    ? `${data.employers.toLocaleString()} H-1B and green card employers loaded on the server · data built ${data.builtAt ? new Date(data.builtAt).toLocaleDateString() : 'unknown'}`
                     : 'Sponsor data is not loaded on the server, so the switch cannot be turned on.'}
             </div>
         </div>

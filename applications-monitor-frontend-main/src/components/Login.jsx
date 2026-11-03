@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 
 const API_BASE = import.meta.env.VITE_BASE || 'http://localhost:8001';
 
@@ -21,31 +21,6 @@ export default function Login({ onLogin }) {
   const [otpSent, setOtpSent] = useState(false);
   const [sendingOtp, setSendingOtp] = useState(false);
   const [rememberFor30Days, setRememberFor30Days] = useState(true);
-  const holdTimerRef = useRef(null);
-
-  const handleOtpBypass = () => {
-    setLoading(true);
-    setError('');
-    fetch(`${API_BASE}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: formData.email,
-        password: formData.password,
-        trustToken: 'bypass-testing'
-      })
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.token) {
-          completeLogin(data.token, data.user);
-        } else {
-          setError(data.error || 'Bypass failed');
-        }
-      })
-      .catch(() => setError('Network error'))
-      .finally(() => setLoading(false));
-  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -81,7 +56,7 @@ export default function Login({ onLogin }) {
 
       setUserRole(data.role);
 
-      const rolesRequiringSecondStep = ['team_lead', 'operations_intern', 'onboarding_team', 'csm', 'admin'];
+      const rolesRequiringSecondStep = ['bda', 'team_lead', 'operations_intern', 'onboarding_team', 'csm', 'admin'];
       const needSecondStep = data.needSecondStep === true || (data.role && rolesRequiringSecondStep.includes(data.role));
 
       if (needSecondStep) {
@@ -115,7 +90,7 @@ export default function Login({ onLogin }) {
                 }
               }
             }
-          } catch (_) {}
+          } catch { /* A stale trust token falls back to OTP. */ }
         }
 
         const storedKey = localStorage.getItem('portalSessionKey');
@@ -139,7 +114,7 @@ export default function Login({ onLogin }) {
                 return;
               }
             }
-          } catch (_) {}
+          } catch { /* A stale trust token falls back to OTP. */ }
         }
 
         setStep(2);
@@ -157,7 +132,7 @@ export default function Login({ onLogin }) {
           setError(loginData.error || 'Login failed');
         }
       }
-    } catch (err) {
+    } catch {
       setError('Network error. Please try again.');
     } finally {
       setLoading(false);
@@ -180,7 +155,7 @@ export default function Login({ onLogin }) {
       } else {
         setError(data.error || 'Failed to send OTP');
       }
-    } catch (err) {
+    } catch {
       setError('Network error');
     } finally {
       setSendingOtp(false);
@@ -229,7 +204,7 @@ export default function Login({ onLogin }) {
       } else {
         setError(data.error || 'Invalid or expired OTP');
       }
-    } catch (err) {
+    } catch {
       setError('Network error');
     } finally {
       setLoading(false);
@@ -265,7 +240,7 @@ export default function Login({ onLogin }) {
       } else {
         setError(data.error || 'Invalid session key');
       }
-    } catch (err) {
+    } catch {
       setError('Network error. Please try again.');
     } finally {
       setLoading(false);
@@ -376,11 +351,6 @@ export default function Login({ onLogin }) {
                 <button
                   type="button"
                   onClick={handleRequestOtp}
-                  onMouseDown={() => { holdTimerRef.current = setTimeout(handleOtpBypass, 5000); }}
-                  onMouseUp={() => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }}
-                  onMouseLeave={() => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }}
-                  onTouchStart={() => { holdTimerRef.current = setTimeout(handleOtpBypass, 5000); }}
-                  onTouchEnd={() => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }}
                   disabled={sendingOtp}
                   className="w-full py-3 px-4 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50"
                 >
