@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import Layout from './Layout';
 import toast from 'react-hot-toast';
 import JobrightCredsBody from './JobrightCredsBody.jsx';
+import ClientAppPasswordModal from './ClientAppPasswordModal.jsx';
 import { Link } from 'react-router-dom';
 import { Pencil, X, Loader2, Play, Square, CheckCircle2, XCircle, Clock, SkipForward, AlertTriangle, ChevronDown, ChevronRight, BellOff } from 'lucide-react';
 import {
@@ -270,7 +271,9 @@ export default function ClientJobAnalysis() {
   // a different question from "can we reach them": this is whether we can still
   // READ their inbox, which is what produces the interview and offer alerts in
   // the first place. Losing sight of it was how a dead token could go unnoticed.
-  const [mailConn, setMailConn] = useState({ connected: new Set(), reconnect: new Set() });
+  const [mailConn, setMailConn] = useState({ connected: new Set(), reconnect: new Set(), appPassword: new Set() });
+  // Client whose Gmail app password popup is open ({ email, name }) or null.
+  const [appPwFor, setAppPwFor] = useState(null);
   // Column legend, opened from the header. Closed by default so it costs no space.
   const [deliveryLegendOpen, setDeliveryLegendOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -495,7 +498,8 @@ export default function ClientJobAnalysis() {
         const data = await gm.value.json().catch(() => ({}));
         setMailConn({
           connected: toSet(data.connected),
-          reconnect: toSet(data.reconnect)
+          reconnect: toSet(data.reconnect),
+          appPassword: toSet(data.appPassword)
         });
       }
     } catch {
@@ -1121,6 +1125,8 @@ export default function ClientJobAnalysis() {
   );
 
   const isAdmin = userRole === 'admin';
+  // Same people who manage JobRight credentials; the backend enforces it too.
+  const canManageAppPassword = userRole === 'admin' || userRole === 'team_lead';
 
   // Flagged clients, computed from the UNFILTERED row set on purpose. If this
   // read from processedRows, narrowing the table with any filter would make the
@@ -1458,17 +1464,22 @@ export default function ClientJobAnalysis() {
                 <ul className="space-y-1">
                   <li className="flex items-start gap-2">
                     <span className="mt-1 inline-block h-2 w-2 shrink-0 rounded-full bg-green-500" />
-                    <span>Google mail connected.</span>
+                    <span>Mail connected, by Gmail app password or Google sign-in.</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="mt-1 inline-block h-2 w-2 shrink-0 rounded-full bg-amber-500" />
-                    <span><strong>Reconnect needed.</strong> It was connected but the Google token expired, so we have stopped seeing their mail.</span>
+                    <span><strong>Reconnect needed.</strong> The Google token expired or Gmail refused the app password, so we have stopped seeing their mail.</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="mt-1 inline-block h-2 w-2 shrink-0 rounded-full bg-red-400" />
                     <span>Never connected. We cannot detect their interviews or offers at all.</span>
                   </li>
                 </ul>
+                {canManageAppPassword && (
+                  <p className="mt-1.5 text-slate-600">
+                    Click a client's dot to connect or replace their Gmail app password.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -1869,20 +1880,35 @@ export default function ClientJobAnalysis() {
                           : gReconnect
                             ? 'bg-amber-500'
                             : 'bg-red-400';
-                        const gTitle = gConnected
-                          ? 'Google mail connected. We can read this inbox for interview, assignment and offer mails.'
+                        const viaAppPw = mailConn.appPassword?.has(String(r.email || '').toLowerCase());
+                        const gTitle = (gConnected
+                          ? viaAppPw
+                            ? 'Mail connected by Gmail app password. We can read this inbox for interview, assignment and offer mails.'
+                            : 'Google mail connected. We can read this inbox for interview, assignment and offer mails.'
                           : gReconnect
-                            ? 'Google mail was connected but the token expired. RECONNECT needed, or we stop seeing their interview and offer mails.'
-                            : 'No Google mail connected. We cannot detect interviews, assignments or offers for this client.';
+                            ? viaAppPw
+                              ? 'Gmail refused the saved app password. REPLACE it, or we stop seeing their interview and offer mails.'
+                              : 'Google mail was connected but the token expired. RECONNECT needed, or we stop seeing their interview and offer mails.'
+                            : 'No mail connected. We cannot detect interviews, assignments or offers for this client.')
+                          + (canManageAppPassword ? ' Click to set the Gmail app password.' : '');
+                        const dot = <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${gTone}`} aria-hidden="true" />;
 
                         return (
                           <span className="inline-flex items-center gap-1">
                             {badge}
-                            <span
-                              className={`inline-block h-2 w-2 shrink-0 rounded-full ${gTone}`}
-                              title={gTitle}
-                              aria-label={gTitle}
-                            />
+                            {canManageAppPassword ? (
+                              <button
+                                type="button"
+                                onClick={() => setAppPwFor({ email: r.email, name: r.name || '' })}
+                                title={gTitle}
+                                aria-label={gTitle}
+                                className="-m-1 inline-flex items-center justify-center rounded-full p-1 hover:ring-2 hover:ring-orange-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+                              >
+                                {dot}
+                              </button>
+                            ) : (
+                              <span className="inline-flex" title={gTitle} aria-label={gTitle} role="img">{dot}</span>
+                            )}
                           </span>
                         );
                       })()}
@@ -2276,6 +2302,20 @@ export default function ClientJobAnalysis() {
           </table>
         </div>
       </div>
+
+      {appPwFor && (
+        <ClientAppPasswordModal
+          apiBase={API_BASE}
+          authHeaders={AUTH_HEADERS}
+          client={appPwFor}
+          onClose={() => setAppPwFor(null)}
+          onSaved={(saved) => {
+            toast.success(`App password connected for ${saved?.gmailEmail || appPwFor.email}`);
+            setAppPwFor(null);
+            loadMailConnection();
+          }}
+        />
+      )}
 
       {/* Scrape All — confirm + progress + summary modal */}
       {batchModalOpen && (
