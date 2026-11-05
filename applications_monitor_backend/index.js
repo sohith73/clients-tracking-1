@@ -5249,10 +5249,25 @@ app.get('/api/clients/mattermost-status', async (req, res) => {
 app.get('/api/clients/mail-connection', async (req, res) => {
   try {
     const db = mongoose.connection.db;
-    const mailboxes = await db
+    const oauthMailboxes = await db
       .collection('gmailusers')
       .find({ refreshToken: { $exists: true, $ne: '' } }, { projection: { email: 1, ownerEmail: 1 } })
       .toArray();
+    // Gmail app passwords (IMAP + SMTP), set by operators on the dashboard
+    // Profile page. They take precedence over OAuth on the same address, and a
+    // rejected one (authFailedAt) needs replacing just like a dead token.
+    let appMailboxes = [];
+    try {
+      appMailboxes = await db
+        .collection('mailapppasswords')
+        .find({}, { projection: { gmailEmail: 1, ownerEmail: 1, authFailedAt: 1 } })
+        .toArray();
+    } catch (_) { /* collection may not exist yet — no app passwords */ }
+    const appBoxes = new Set(appMailboxes.map((a) => String(a.gmailEmail || '').toLowerCase()));
+    const mailboxes = [
+      ...appMailboxes.map((a) => ({ email: a.gmailEmail, ownerEmail: a.ownerEmail, appPasswordFailed: !!a.authFailedAt })),
+      ...oauthMailboxes.filter((m) => !appBoxes.has(String(m.email || '').toLowerCase()))
+    ];
 
     let dead = new Set();
     try {
@@ -5267,7 +5282,7 @@ app.get('/api/clients/mail-connection', async (req, res) => {
     const reconnect = new Set();
     for (const m of mailboxes) {
       const box = String(m.email || '').toLowerCase();
-      const isDead = dead.has(box);
+      const isDead = m.appPasswordFailed === true || (!appBoxes.has(box) && dead.has(box));
       for (const addr of [box, String(m.ownerEmail || '').toLowerCase()].filter(Boolean)) {
         if (isDead) reconnect.add(addr);
         else connected.add(addr);
