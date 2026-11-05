@@ -5291,7 +5291,13 @@ app.get('/api/clients/mail-connection', async (req, res) => {
     // A healthy mailbox wins: if any mailbox for an address is alive, it's connected.
     for (const a of connected) reconnect.delete(a);
 
-    res.json({ connected: [...connected], reconnect: [...reconnect], mailboxes: mailboxes.length });
+    // Addresses (mailbox + owner) connected through an app password, so the
+    // dot can say how a client is connected.
+    const viaAppPassword = new Set();
+    for (const a of appMailboxes) {
+      for (const addr of [a.gmailEmail, a.ownerEmail].map((x) => String(x || '').toLowerCase()).filter(Boolean)) viaAppPassword.add(addr);
+    }
+    res.json({ connected: [...connected], reconnect: [...reconnect], appPassword: [...viaAppPassword], mailboxes: mailboxes.length });
   } catch (e) {
     console.error('mail-connection error', e?.message || e);
     res.status(500).json({ error: 'mail_connection_failed' });
@@ -5422,6 +5428,74 @@ const updateClientCountry = async (req, res) => {
   }
 };
 
+// ─── Gmail app password (Client Job Analysis "G" dot) ─────────────────
+//
+// A client's Gmail app password lets Flashfire read their inbox (IMAP) and
+// send recruiter mail as them (SMTP). The dashboard backend owns it: it checks
+// the password against Gmail, encrypts it and stores it in the shared
+// `mailapppasswords` collection. This portal only relays, server to server
+// with the ops key, so the key never reaches a browser and there is exactly
+// one place that encrypts and verifies.
+//
+// Same audience as the JobRight credentials: admins and team leads.
+const verifyAppPasswordManage = (req, res, next) => {
+  const role = req.user?.role || '';
+  if (role === 'admin' || role === 'team_lead') return next();
+  return res.status(403).json({ error: 'Only admins and team leads can manage a client\'s Gmail app password.' });
+};
+
+async function dashboardAppPassword(email, { method = 'GET', body, timeoutMs = 15000 } = {}) {
+  const url = `${FLASHFIRE_API_BASE_URL.replace(/\/+$/, '')}/gmail/app-password/ops/${encodeURIComponent(email)}`;
+  try {
+    const resp = await fetch(url, {
+      method,
+      headers: { 'content-type': 'application/json', 'x-ops-key': FLASHFIRE_OPS_KEY },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.status === 401) {
+      return { status: 502, data: { error: 'ops_key_rejected', message: 'The dashboard refused this portal (OPS_SECRET_KEY must match on both services).' } };
+    }
+    return { status: resp.status, data };
+  } catch (e) {
+    const timedOut = e?.name === 'TimeoutError';
+    return {
+      status: timedOut ? 504 : 502,
+      data: { error: timedOut ? 'dashboard_timeout' : 'dashboard_unreachable', message: timedOut ? 'Gmail took too long to answer. Try again.' : 'Could not reach the dashboard backend. Try again.' },
+    };
+  }
+}
+
+// GET /api/clients/:email/app-password -> { connected, gmailEmail, connectedAt, lastVerifiedAt, needsReplacing }
+const getClientAppPassword = async (req, res) => {
+  const emailLower = String(req.params.email || '').toLowerCase().trim();
+  if (!emailLower) return res.status(400).json({ error: 'Email is required' });
+  const { status, data } = await dashboardAppPassword(emailLower);
+  return res.status(status).json(data);
+};
+
+// PUT /api/clients/:email/app-password { gmailEmail, appPassword }
+// The dashboard logs into Gmail (IMAP and SMTP) before saving, so this can
+// take several seconds. The password is relayed, never stored or logged here.
+const putClientAppPassword = async (req, res) => {
+  const emailLower = String(req.params.email || '').toLowerCase().trim();
+  if (!emailLower) return res.status(400).json({ error: 'Email is required' });
+  const { gmailEmail, appPassword } = req.body || {};
+  if (typeof gmailEmail !== 'string' || typeof appPassword !== 'string') {
+    return res.status(400).json({ error: 'invalid_body', message: 'Send gmailEmail and appPassword.' });
+  }
+  const client = await ClientModel.findOne({ email: emailLower }).select('email').lean();
+  if (!client) return res.status(404).json({ error: 'client_not_found', message: 'Client not found.' });
+  const { status, data } = await dashboardAppPassword(emailLower, {
+    method: 'PUT',
+    body: { gmailEmail, appPassword },
+    timeoutMs: 60000,
+  });
+  if (status === 200) console.log(`app-password: ${req.user?.email || 'someone'} connected ${data.gmailEmail} for ${emailLower}`);
+  return res.status(status).json(data);
+};
+
 // Toggle "JobRight account created" from the Client Job Analysis row.
 //
 // GET /scripts/jobrightsync seeds this flag in bulk from data/jobrightClients.js;
@@ -5527,6 +5601,8 @@ app.patch('/api/clients/:email/client-number', verifyToken, verifyAdmin, updateC
 app.patch('/api/clients/:email/client-country', verifyToken, verifyAdmin, updateClientCountry);
 app.patch('/api/clients/:email/jobright', verifyToken, verifyJobrightToggle, updateClientJobright);
 app.get('/api/clients/:email/jobright-creds', verifyToken, verifyJobrightRead, getClientJobrightCreds);
+app.get('/api/clients/:email/app-password', verifyToken, verifyAppPasswordManage, getClientAppPassword);
+app.put('/api/clients/:email/app-password', verifyToken, verifyAppPasswordManage, putClientAppPassword);
 app.post('/api/clients/sync-client-numbers', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const synced = await syncClientNumbersToOnboardingJobs();
