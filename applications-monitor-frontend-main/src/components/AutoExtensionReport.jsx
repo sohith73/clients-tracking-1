@@ -442,6 +442,7 @@ export default function AutoExtensionReport() {
                       <div className="text-[11px] text-slate-500">
                         {r.lastMinutes ? `${r.lastMinutes} min` : ''}
                         {r.lastTrigger === 'portal' ? ' · from portal' : ''}
+                        {r.lastTrigger === 'europe' ? ' · Europe run' : ''}
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right text-sm tabular-nums text-slate-800">{r.lastCaptured ?? 0}</td>
@@ -704,12 +705,14 @@ function ClientRunDetail({ row, detail, loading, onClose, onScrape, live, queuei
                     ) : (
                       runs.map((run) => (
                         <tr key={run._id}>
-                          <td className="px-3 py-2 text-sm text-slate-700" title={fmtExact(run.finishedAt)}>
+                          <td className="whitespace-nowrap px-3 py-2 text-sm text-slate-700" title={fmtExact(run.finishedAt)}>
                             {fmtWhen(run.finishedAt)}
                             {run.trigger === 'portal' ? (
                               <div className="text-[11px] text-slate-400">
                                 from portal{run.requestedBy ? ` · ${run.requestedBy}` : ''}
                               </div>
+                            ) : run.trigger === 'europe' ? (
+                              <div className="text-[11px] text-slate-400">Europe run</div>
                             ) : null}
                           </td>
                           <td className="px-3 py-2 text-right text-sm tabular-nums text-slate-800">{run.captured}</td>
