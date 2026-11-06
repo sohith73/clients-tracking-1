@@ -219,6 +219,62 @@ const FLASHFIRE_API_BASE_URL = process.env.VITE_FLASHFIRE_API_BASE_URL || 'https
 // services, or every provisioning call below comes back 401.
 const FLASHFIRE_OPS_KEY = process.env.OPS_SECRET_KEY || 'flashfire@2025';
 
+// Team-standard logins the autopilot falls back to, so a client is never
+// stopped at a login step just because nobody typed the usual values in.
+//   JobRight: the client's email + the standard JobRight password.
+//   Panel:    the client's email + the standard dashboard password, and the
+//             extension's master operator code (accepted locally by
+//             jr-direct-extension/sidepanel.js, never sent to the dashboard).
+// A value already saved for a client always wins over these.
+const DEFAULT_JR_PASSWORD = process.env.DEFAULT_JR_PASSWORD || 'Jobhunt@2026';
+const DEFAULT_PANEL_PASSWORD = process.env.DEFAULT_PANEL_PASSWORD || 'flashfire@123';
+const DEFAULT_PANEL_CODE = process.env.DEFAULT_PANEL_CODE || '00000';
+
+// Write autopilot credential fields through the dashboard backend's ops-gated
+// upsert (PUT /autopilot/creds/:email changes only the fields it is sent).
+// Returns { ok, status, message } and never throws.
+async function saveAutopilotCreds(email, fields, updatedBy = '') {
+  const url = `${FLASHFIRE_API_BASE_URL.replace(/\/+$/, '')}/autopilot/creds/${encodeURIComponent(email)}`;
+  try {
+    const resp = await fetch(url, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-ops-key': FLASHFIRE_OPS_KEY },
+      body: JSON.stringify({ ...fields, updatedBy }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const message = resp.status === 401
+        ? 'ops key rejected - OPS_SECRET_KEY must match the dashboard backend'
+        : (body.message || `HTTP ${resp.status}`);
+      return { ok: false, status: resp.status, message };
+    }
+    return { ok: true, status: 200, message: '' };
+  } catch (e) {
+    const message = e?.name === 'TimeoutError' ? 'dashboard backend timed out' : (e?.message || 'request failed');
+    return { ok: false, status: 502, message };
+  }
+}
+
+// Fill the panel half of a client's login with the team defaults, blanks only.
+// Reads the raw record first because the dashboard's PUT overwrites whatever
+// it is sent, and a client's own panel password must survive.
+async function fillPanelDefaults(email, updatedBy = '') {
+  const current = await fetchAutopilotJrCreds(email, true);
+  if (current.reason && !current.onFile && current.reason !== 'no credentials on file') {
+    return { ok: false, filled: [], message: current.reason };
+  }
+  const c = current.creds || {};
+  const want = { extEmail: email, extPassword: DEFAULT_PANEL_PASSWORD, extCode: DEFAULT_PANEL_CODE };
+  const fill = {};
+  for (const [k, v] of Object.entries(want)) {
+    if (!String(c[k] || '').trim()) fill[k] = v;
+  }
+  if (!Object.keys(fill).length) return { ok: true, filled: [], message: '' };
+  const saved = await saveAutopilotCreds(email, fill, updatedBy);
+  return { ok: saved.ok, filled: saved.ok ? Object.keys(fill) : [], message: saved.message };
+}
+
 // Give a client the JobRight credentials the autopilot needs.
 //
 // Fired when an operator flips Client Job Analysis -> JobRight -> Yes. The
@@ -278,7 +334,7 @@ async function provisionAutopilotJrCreds(email, updatedBy = '') {
 // JWT instead.
 //
 // Never throws: a credentials panel that cannot load must not 500 the page.
-async function fetchAutopilotJrCreds(email) {
+async function fetchAutopilotJrCreds(email, withCode = false) {
   const url = `${FLASHFIRE_API_BASE_URL.replace(/\/+$/, '')}/autopilot/creds/${encodeURIComponent(email)}`;
   try {
     const resp = await fetch(url, {
@@ -295,6 +351,9 @@ async function fetchAutopilotJrCreds(email) {
       return { onFile: false, creds: null, reason };
     }
     const d = body.data || {};
+    const jrReady = !!String(d.jrEmail || '').trim() && !!String(d.jrPassword || '').trim();
+    const panelReady = !!String(d.extEmail || '').trim() && !!String(d.extPassword || '').trim()
+      && !!String(d.extCode || '').trim();
     return {
       onFile: true,
       reason: '',
@@ -306,11 +365,18 @@ async function fetchAutopilotJrCreds(email) {
         // extCode is deliberately not returned. It is the same operator code
         // for every client, so it is not information this panel exists to
         // show, and sending it would put a shared secret in the browser's
-        // network tab on a screen that gets screenshotted.
+        // network tab on a screen that gets screenshotted. The UI only needs
+        // to know whether one is saved. withCode is for server-side callers
+        // (fillPanelDefaults) that must tell blank from set.
+        ...(withCode ? { extCode: d.extCode || '' } : {}),
+        hasExtCode: !!String(d.extCode || '').trim(),
         hcSearch: d.hcSearch || '',
-        // The autopilot can only log in unattended when both halves are there,
-        // so state the conclusion rather than leaving the UI to infer it.
-        autoLoginReady: !!String(d.jrEmail || '').trim() && !!String(d.jrPassword || '').trim(),
+        // The autopilot logs into JobRight AND the extension panel, and stops
+        // at whichever login is missing ("Panel login needed"). So it is only
+        // ready unattended when both halves are saved; say which half is not.
+        jrReady,
+        panelReady,
+        autoLoginReady: jrReady && panelReady,
       },
     };
   } catch (e) {
@@ -5530,6 +5596,96 @@ const getClientJobrightCreds = async (req, res) => {
   }
 };
 
+// PUT /api/clients/:email/jobright-creds
+//
+// Save the autopilot logins for one client from the portal, so a manager can
+// fix "Panel login needed" without opening the desktop app. Same audience as
+// reading them (admin or team lead).
+//
+// Body (all optional): jrEmail, jrPassword, extEmail, extPassword, extCode,
+// useDefaults. A field that is missing or blank is left as it is, so the
+// form can be saved without retyping passwords. useDefaults: true fills every
+// still-blank field with the team defaults (client email, standard passwords,
+// master operator code). Answers with the fresh credentials, same shape as GET.
+const CREDS_TEXT_FIELDS = ['jrEmail', 'jrPassword', 'extEmail', 'extPassword', 'extCode'];
+const putClientJobrightCreds = async (req, res) => {
+  try {
+    const emailLower = String(req.params.email || '').toLowerCase().trim();
+    if (!emailLower) return res.status(400).json({ error: 'Email is required' });
+    const body = req.body || {};
+
+    const set = {};
+    for (const k of CREDS_TEXT_FIELDS) {
+      if (body[k] === undefined || body[k] === null) continue;
+      if (typeof body[k] !== 'string') return res.status(400).json({ error: `${k} must be text` });
+      const v = body[k].trim();
+      if (!v) continue;
+      if (v.length > 200) return res.status(400).json({ error: `${k} is too long` });
+      set[k] = v;
+    }
+    for (const k of ['jrEmail', 'extEmail']) {
+      if (set[k] && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(set[k])) {
+        return res.status(422).json({ error: `${k === 'jrEmail' ? 'JobRight' : 'Panel'} email is not a valid email address` });
+      }
+    }
+    if (set.extCode && !/^\d{5}$/.test(set.extCode)) {
+      return res.status(422).json({ error: 'Operator code must be exactly 5 digits' });
+    }
+    if (body.useDefaults !== undefined && typeof body.useDefaults !== 'boolean') {
+      return res.status(400).json({ error: 'useDefaults must be true or false' });
+    }
+
+    const client = await ClientModel.findOne({ email: emailLower }).select('email jobrightCreated jobrightCreatedAt').lean();
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+
+    if (body.useDefaults === true) {
+      const current = await fetchAutopilotJrCreds(emailLower, true);
+      if (!current.onFile && current.reason !== 'no credentials on file') {
+        return res.status(502).json({ error: `Could not read the saved credentials: ${current.reason}` });
+      }
+      const c = current.creds || {};
+      const defaults = {
+        jrEmail: emailLower,
+        jrPassword: DEFAULT_JR_PASSWORD,
+        extEmail: emailLower,
+        extPassword: DEFAULT_PANEL_PASSWORD,
+        extCode: DEFAULT_PANEL_CODE,
+      };
+      for (const [k, v] of Object.entries(defaults)) {
+        if (!set[k] && !String(c[k] || '').trim()) set[k] = v;
+      }
+    }
+
+    if (!Object.keys(set).length) {
+      return res.status(400).json({ error: 'Nothing to save: every field was left blank.' });
+    }
+
+    const by = `clients-tracking:creds-form:${req.user?.email || 'unknown'}`;
+    const saved = await saveAutopilotCreds(emailLower, set, by);
+    if (!saved.ok) {
+      // A 400 from the dashboard is a validation answer (for example a
+      // FlashFire address as the JobRight login); pass it on as such.
+      const status = saved.status === 400 ? 422 : 502;
+      return res.status(status).json({ error: saved.message });
+    }
+    // Log which fields changed, never their values.
+    console.log(`jobright-creds: ${req.user?.email || 'someone'} saved ${Object.keys(set).join(',')} for ${emailLower}`);
+
+    const result = await fetchAutopilotJrCreds(emailLower);
+    res.status(200).json({
+      success: true,
+      email: client.email,
+      jobrightCreated: client.jobrightCreated === true,
+      jobrightCreatedAt: client.jobrightCreatedAt || null,
+      saved: Object.keys(set),
+      ...result,
+    });
+  } catch (error) {
+    console.error('putClientJobrightCreds:', error);
+    res.status(500).json({ error: error.message || 'Failed to save JobRight credentials' });
+  }
+};
+
 const updateClientJobright = async (req, res) => {
   try {
     const emailLower = String(req.params.email || '').toLowerCase().trim();
@@ -5575,10 +5731,15 @@ const updateClientJobright = async (req, res) => {
     // was not already there.
     let autopilotCreds = null;
     if (value === true) {
-      autopilotCreds = await provisionAutopilotJrCreds(
-        client.email,
-        `clients-tracking:jobright-toggle:${req.user?.email || 'admin'}`,
-      );
+      const by = `clients-tracking:jobright-toggle:${req.user?.email || 'admin'}`;
+      autopilotCreds = await provisionAutopilotJrCreds(client.email, by);
+      // The panel login is the second half the autopilot needs. Without it a
+      // run opens JobRight fine and then stops at "Panel login needed".
+      if (autopilotCreds.provisioned) {
+        const panel = await fillPanelDefaults(client.email, by);
+        autopilotCreds.panelFilled = panel.filled;
+        if (!panel.ok) autopilotCreds.panelReason = panel.message;
+      }
     }
 
     res.status(200).json({
@@ -5601,6 +5762,7 @@ app.patch('/api/clients/:email/client-number', verifyToken, verifyAdmin, updateC
 app.patch('/api/clients/:email/client-country', verifyToken, verifyAdmin, updateClientCountry);
 app.patch('/api/clients/:email/jobright', verifyToken, verifyJobrightToggle, updateClientJobright);
 app.get('/api/clients/:email/jobright-creds', verifyToken, verifyJobrightRead, getClientJobrightCreds);
+app.put('/api/clients/:email/jobright-creds', verifyToken, verifyJobrightRead, putClientJobrightCreds);
 app.get('/api/clients/:email/app-password', verifyToken, verifyAppPasswordManage, getClientAppPassword);
 app.put('/api/clients/:email/app-password', verifyToken, verifyAppPasswordManage, putClientAppPassword);
 app.post('/api/clients/sync-client-numbers', verifyToken, verifyAdmin, async (req, res) => {

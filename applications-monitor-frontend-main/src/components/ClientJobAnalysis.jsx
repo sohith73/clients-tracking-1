@@ -3,6 +3,7 @@ import Layout from './Layout';
 import toast from 'react-hot-toast';
 import JobrightCredsBody from './JobrightCredsBody.jsx';
 import ClientAppPasswordModal from './ClientAppPasswordModal.jsx';
+import AutopilotCredsModal from './AutopilotCredsModal.jsx';
 import { Link } from 'react-router-dom';
 import { Pencil, X, Loader2, Play, Square, CheckCircle2, XCircle, Clock, SkipForward, AlertTriangle, ChevronDown, ChevronRight, BellOff } from 'lucide-react';
 import {
@@ -293,30 +294,10 @@ export default function ClientJobAnalysis() {
   // next page load - so a manager had no way to confirm the account details
   // actually landed. Fetched on demand, one client at a time: these are real
   // passwords and there is no reason to pull 300 of them to render a table.
-  const [credsByEmail, setCredsByEmail] = useState({});
-  const [credsOpenFor, setCredsOpenFor] = useState('');
-  const [credsLoading, setCredsLoading] = useState('');
-
-  const loadJobrightCreds = async (email) => {
-    // Second click closes the popover rather than refetching.
-    if (credsOpenFor === email) { setCredsOpenFor(''); return; }
-    setCredsOpenFor(email);
-    if (credsByEmail[email]) return;
-    setCredsLoading(email);
-    try {
-      const resp = await fetch(`${API_BASE}/api/clients/${encodeURIComponent(email)}/jobright-creds`, {
-        headers: AUTH_HEADERS(),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(data.error || 'Failed to load credentials');
-      setCredsByEmail((prev) => ({ ...prev, [email]: data }));
-    } catch (e) {
-      toast.error(e.message || 'Failed to load JobRight credentials');
-      setCredsOpenFor('');
-    } finally {
-      setCredsLoading('');
-    }
-  };
+  // Opened as a modal, not a popover: an absolutely positioned box inside the
+  // table cell was clipped by the table's scroll container and pushed off the
+  // right edge, which made the credentials unreadable on most rows.
+  const [credsFor, setCredsFor] = useState(null); // { email, name } | null
   // Per-client scrape counts, loaded from the scraper service on mount. The
   // per-row Scrape column that used to edit them is gone; these now only seed
   // the "Scrape All" modal, where each count is still editable before running.
@@ -2224,29 +2205,15 @@ export default function ClientJobAnalysis() {
                           that may read a password, and only once the account is
                           marked as created - before that there is nothing to
                           have provisioned. */}
-                      {r.jobrightCreated === true && (userRole === 'admin' || userRole === 'team_lead') && (
-                        <div className="relative inline-block ml-1 align-middle">
-                          <button
-                            type="button"
-                            onClick={() => loadJobrightCreds(r.email)}
-                            className="text-[10px] px-1 py-0.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-100"
-                            title="Show the autopilot login saved for this client"
-                          >
-                            {credsLoading === r.email ? '…' : 'creds'}
-                          </button>
-                          {credsOpenFor === r.email && credsByEmail[r.email] && (
-                            <div className="absolute z-30 right-0 mt-1 w-72 p-2 bg-white border border-slate-300 rounded-lg shadow-lg text-left">
-                              <JobrightCredsBody data={credsByEmail[r.email]} />
-                              <button
-                                type="button"
-                                onClick={() => setCredsOpenFor('')}
-                                className="mt-1 text-[10px] text-slate-500 hover:text-slate-800"
-                              >
-                                Close
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                      {(userRole === 'admin' || userRole === 'team_lead') && (
+                        <button
+                          type="button"
+                          onClick={() => setCredsFor({ email: r.email, name: r.name })}
+                          className="ml-1 align-middle text-[10px] px-1 py-0.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          title="View or save the autopilot logins (JobRight + panel) for this client"
+                        >
+                          creds
+                        </button>
                       )}
                     </td>
                     <td className="px-2 py-1 text-right">
@@ -2313,6 +2280,20 @@ export default function ClientJobAnalysis() {
             toast.success(`App password connected for ${saved?.gmailEmail || appPwFor.email}`);
             setAppPwFor(null);
             loadMailConnection();
+          }}
+        />
+      )}
+
+      {credsFor && (
+        <AutopilotCredsModal
+          apiBase={API_BASE}
+          authHeaders={AUTH_HEADERS}
+          client={credsFor}
+          onClose={() => setCredsFor(null)}
+          onSaved={(saved) => {
+            toast.success(saved?.creds?.autoLoginReady
+              ? `Logins saved. Autopilot can sign in for ${credsFor.email}`
+              : `Saved for ${credsFor.email}`);
           }}
         />
       )}
