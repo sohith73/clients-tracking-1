@@ -80,37 +80,38 @@ export default function JobrightCredsBody({ data }) {
                     // The flag and the credentials disagree, which is the exact
                     // state that makes a client look ready and never scrape.
                     <div className="mt-1 text-slate-500">
-                        JobRight is marked as created, so this one needs provisioning by hand
-                        (re-saving the toggle will do it).
+                        JobRight is marked as created, so this one needs saving: use
+                        Fill team defaults or Edit.
                     </div>
                 )}
             </div>
         );
     }
 
+    const missing = [!creds.jrReady && 'JobRight', !creds.panelReady && 'panel'].filter(Boolean);
     return (
         <div>
             <div className={`text-[11px] font-semibold mb-1 ${creds.autoLoginReady ? 'text-emerald-700' : 'text-amber-700'}`}>
                 {creds.autoLoginReady
                     ? 'Autopilot can log in unattended'
-                    : 'Incomplete - the autopilot will stop at the login step'}
+                    : `Incomplete - the autopilot will stop at the ${missing.join(' and ')} login`}
             </div>
             <Field label="JR email" value={creds.jrEmail} />
             <Field label="JR pass" value={creds.jrPassword} secret />
-            {/* The dashboard-panel login is a different account; shown only when
-                it has been filled in, since the toggle never writes it.
-
-                The operator code is deliberately NOT shown. It is the same
-                code for everyone, it is not per-client information, and this
-                panel sits on a screen managers share and screenshot. The
-                backend stops sending it too, so it is absent from the
-                response rather than merely hidden in the markup. */}
-            {(creds.extEmail || creds.extPassword) && (
-                <div className="mt-1 pt-1 border-t border-slate-200">
-                    <Field label="Panel email" value={creds.extEmail} />
-                    <Field label="Panel pass" value={creds.extPassword} secret />
+            {/* The dashboard-panel login is a different account. The
+                operator code is never sent to the browser (it is the same
+                code for everyone and this panel gets screenshotted); only
+                whether one is saved. */}
+            <div className="mt-1 pt-1 border-t border-slate-200">
+                <Field label="Panel email" value={creds.extEmail} />
+                <Field label="Panel pass" value={creds.extPassword} secret />
+                <div className="flex items-baseline gap-2 py-0.5">
+                    <span className="text-[10px] uppercase tracking-wide text-slate-400 w-20 shrink-0">Op code</span>
+                    <span className={`text-[11px] ${creds.hasExtCode ? 'text-slate-800' : 'text-slate-400 italic'}`}>
+                        {creds.hasExtCode ? 'saved' : 'not set'}
+                    </span>
                 </div>
-            )}
+            </div>
             {creds.hcSearch && (
                 <div className="mt-1 pt-1 border-t border-slate-200">
                     <Field label="HC search" value={creds.hcSearch} />

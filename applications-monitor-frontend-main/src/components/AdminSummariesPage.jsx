@@ -22,6 +22,7 @@ import React, { useEffect, useMemo, useState, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { buildAiSummaryAndWait, describeBuildFailure } from '../utils/aiSummaryBuild';
 import JobrightCredsBody from './JobrightCredsBody.jsx';
+import AutopilotCredsModal from './AutopilotCredsModal.jsx';
 
 const DASHBOARD_BASE = (import.meta.env.VITE_DASHBOARD_BASE || 'http://localhost:8086').replace(/\/+$/, '');
 // The portal's own backend. This page talked only to the dashboard backend
@@ -999,7 +1000,7 @@ function ClientDetailPane({ row, onProfileChanged }) {
                 Job Analysis provisioned for this client. Here because this pane
                 is where a manager looks a client up, and the toggle's toast is
                 long gone by then. */}
-            <JobrightCredsCard email={row.email} />
+            <JobrightCredsCard email={row.email} name={row.name} />
 
             {/* Scrape sources — per-client site allowlist for the JR-direct extension */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
@@ -2124,8 +2125,9 @@ function UsSponsorCard({ email }) {
     );
 }
 
-function JobrightCredsCard({ email }) {
+function JobrightCredsCard({ email, name }) {
     const [data, setData] = useState(null);
+    const [editing, setEditing] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
@@ -2158,19 +2160,37 @@ function JobrightCredsCard({ email }) {
                         🔑 JobRight credentials
                     </h3>
                     <p className="text-xs text-slate-500 mt-1">
-                        The autopilot login provisioned when a manager set <strong>JobRight: Yes</strong> on
-                        Client Job Analysis. Admins and team leads only.
+                        The JobRight and extension-panel logins the autopilot signs in with.
+                        Edit to save them here. Admins and team leads only.
                     </p>
                 </div>
-                <button
-                    type="button"
-                    onClick={load}
-                    disabled={loading}
-                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white hover:bg-slate-700 disabled:opacity-50"
-                >
-                    {loading ? 'Loading…' : data ? 'Reload' : 'Show'}
-                </button>
+                <div className="flex gap-2 shrink-0">
+                    <button
+                        type="button"
+                        onClick={() => setEditing(true)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-300 text-slate-800 hover:bg-slate-50"
+                    >
+                        Edit
+                    </button>
+                    <button
+                        type="button"
+                        onClick={load}
+                        disabled={loading}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white hover:bg-slate-700 disabled:opacity-50"
+                    >
+                        {loading ? 'Loading…' : data ? 'Reload' : 'Show'}
+                    </button>
+                </div>
             </div>
+            {editing && (
+                <AutopilotCredsModal
+                    apiBase={API_BASE}
+                    authHeaders={AUTH_HEADERS}
+                    client={{ email, name }}
+                    onClose={() => setEditing(false)}
+                    onSaved={(saved) => { setData(saved); toast.success('Autopilot logins saved'); }}
+                />
+            )}
             {error && <div className="text-[11px] text-red-700">{error}</div>}
             {data && <JobrightCredsBody data={data} />}
             {!data && !error && !loading && (
