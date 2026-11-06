@@ -5451,6 +5451,27 @@ const updateClientNumber = async (req, res) => {
   }
 };
 
+// Europe clients scrape Indeed, Glassdoor and HiringCafe (the weekday Europe
+// run in the autopilot). Setting a client's country to Europe adds the three
+// to profile.scrapeSources, keeping whatever is already ticked. A client with
+// no list saved is JobRight only. The dashboard backend's 3 AM Europe job does
+// the same daily, which covers clients whose profile does not exist yet.
+// Must match EUROPE_SOURCES in the dashboard backend's Utils/europeClients.js.
+const EUROPE_SOURCES = ['indeed', 'glassdoor', 'hiringcafe'];
+
+/** Returns the saved list, or null when the client has no dashboard profile yet. */
+async function enableEuropeSources(Profile, email) {
+  const profile = await Profile.collection.findOne({ email }, { projection: { scrapeSources: 1 } });
+  if (!profile) return null;
+  const had = Array.isArray(profile.scrapeSources) && profile.scrapeSources.length
+    ? [...new Set(profile.scrapeSources.map((s) => String(s || '').toLowerCase().trim()).filter(Boolean))]
+    : ['jobright'];
+  const next = [...had, ...EUROPE_SOURCES.filter((s) => !had.includes(s))];
+  const same = Array.isArray(profile.scrapeSources) && profile.scrapeSources.length === next.length;
+  if (!same) await Profile.collection.updateOne({ email }, { $set: { scrapeSources: next } });
+  return next;
+}
+
 /** PATCH /api/clients/:email/client-country — Body: { clientCountry: 'USA' | 'Canada' | 'UK' | 'Australia' | 'Europe' | null }; null clears. Admin only. */
 const updateClientCountry = async (req, res) => {
   try {
@@ -5481,11 +5502,24 @@ const updateClientCountry = async (req, res) => {
 
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
+    // undefined: not Europe. null: Europe, but no dashboard profile yet.
+    let europeSources;
+    if (client.clientCountry === 'Europe') {
+      try {
+        europeSources = await enableEuropeSources(getProfileModel(), emailLower);
+      } catch (err) {
+        // The country is saved; the 3 AM Europe job retries the sources.
+        console.error('updateClientCountry: could not enable Europe sources:', err.message);
+        europeSources = null;
+      }
+    }
+
     clearAnalysisCache();
       pClearAnalysisCache().catch(() => {});
     res.status(200).json({
       success: true,
       clientCountry: client.clientCountry ?? null,
+      ...(europeSources !== undefined && { europeSources }),
       message: 'Client country updated',
     });
   } catch (error) {

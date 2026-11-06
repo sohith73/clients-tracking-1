@@ -747,7 +747,13 @@ export default function ClientJobAnalysis() {
         prev.map((r) => (r.email === email ? { ...r, clientCountry: next } : r)),
       );
       invalidateCache('analysis:');
-      toast.success('Country updated');
+      if (Array.isArray(data.europeSources)) {
+        toast.success('Europe: Indeed, Glassdoor and HiringCafe are on');
+      } else if (data.europeSources === null) {
+        toast.success('Europe saved. Indeed, Glassdoor and HiringCafe turn on once the dashboard profile exists.');
+      } else {
+        toast.success('Country updated');
+      }
     } catch (e) {
       toast.error(e.message || 'Failed to update country');
     } finally {
