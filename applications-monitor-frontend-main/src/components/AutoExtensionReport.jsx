@@ -88,6 +88,41 @@ function Pill({ tone, children, title }) {
   );
 }
 
+// Fixed display order and fallback labels for the per-portal breakdown. The
+// server also sends sourceLabels, which wins when present; this keeps a sane
+// order and names a source the server did not label.
+const SOURCE_ORDER = ['jobright', 'indeed-api', 'glassdoor-scrape', 'hiringcafe-scrape', 'adzuna-api'];
+const SOURCE_FALLBACK = {
+  jobright: 'JobRight',
+  'indeed-api': 'Indeed',
+  'glassdoor-scrape': 'Glassdoor',
+  'hiringcafe-scrape': 'HiringCafe',
+  'adzuna-api': 'Adzuna',
+};
+
+// "Pushed by portal" — where the pushed jobs came from. JobRight is the
+// extension scrape; the rest are the job-API / Chrome scrapes. Renders nothing
+// when no jobs were pushed, so a failed-login client shows no empty strip.
+function PortalBreakdown({ bySource, labels, className = '' }) {
+  if (!bySource) return null;
+  const keys = [
+    ...SOURCE_ORDER.filter((k) => bySource[k]),
+    ...Object.keys(bySource).filter((k) => bySource[k] && !SOURCE_ORDER.includes(k)),
+  ];
+  if (keys.length === 0) return null;
+  const name = (k) => (labels && labels[k]) || SOURCE_FALLBACK[k] || k;
+  return (
+    <div className={`flex flex-wrap items-center gap-1.5 ${className}`}>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">By portal</span>
+      {keys.map((k) => (
+        <Pill key={k} tone="bg-slate-100 text-slate-700 ring-slate-200" title={`${bySource[k]} pushed from ${name(k)}`}>
+          {name(k)} {bySource[k]}
+        </Pill>
+      ))}
+    </div>
+  );
+}
+
 function StatTile({ label, value, hint, tone = 'text-slate-900' }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
@@ -105,6 +140,7 @@ export default function AutoExtensionReport() {
   const [days, setDays] = useState(7);
   const [rows, setRows] = useState([]);
   const [totals, setTotals] = useState(null);
+  const [sourceLabels, setSourceLabels] = useState(null);
   // The server decides where the window starts (00:00 IST) and says so. We
   // render its label rather than re-deriving one from `days` in the browser's
   // timezone, which is how "Today" ended up meaning two different things on
@@ -148,6 +184,7 @@ export default function AutoExtensionReport() {
       if (!alive.current || mine !== reqId.current) return;
       setRows(summary.data || []);
       setTotals(summary.totals || null);
+      setSourceLabels(summary.sourceLabels || null);
       setWindowLabel(summary.windowLabel || '');
       setQueue(queueBody.data || []);
       setManual(manualBody && manualBody.success ? manualBody : null);
@@ -341,6 +378,10 @@ export default function AutoExtensionReport() {
             hint={totals.failedRuns > 0 ? 'need a person' : 'nothing to fix'}
           />
         </div>
+      ) : null}
+
+      {totals?.bySource ? (
+        <PortalBreakdown bySource={totals.bySource} labels={sourceLabels} className="mb-4" />
       ) : null}
 
       {manual ? (
@@ -681,6 +722,10 @@ function ClientRunDetail({ row, detail, loading, onClose, onScrape, live, queuei
                 </div>
               ) : null}
 
+              {totals?.bySource ? (
+                <PortalBreakdown bySource={totals.bySource} labels={detail?.sourceLabels} className="mb-4" />
+              ) : null}
+
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Run history</h3>
               <div className="overflow-x-auto rounded-lg border border-slate-200">
                 <table className="min-w-full">
@@ -732,6 +777,9 @@ function ClientRunDetail({ row, detail, loading, onClose, onScrape, live, queuei
                             ) : null}
                             {run.attempts > 1 ? (
                               <div className="mt-0.5 text-[11px] text-amber-600">{run.attempts} attempts</div>
+                            ) : null}
+                            {run.bySource ? (
+                              <PortalBreakdown bySource={run.bySource} labels={detail?.sourceLabels} className="mt-1" />
                             ) : null}
                           </td>
                         </tr>
