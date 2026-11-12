@@ -11,7 +11,7 @@
  *     cannot say "Glassdoor's daily limit was used" - only the run knows that.
  * Where the run left no reason, ruleNote() derives one from the client's
  * country and the JobRight count, following the ops rule:
- *   USA/UK/Canada/Australia: JobRight first; boards only when JobRight < 5.
+ *   USA/UK/Canada/Australia: JobRight first; boards only when JobRight < 7.
  *   Europe: no JobRight; HiringCafe, then Indeed, then Glassdoor.
  *
  * A "day" is the cap day: 22:00 IST the evening before to 22:00 IST
@@ -23,7 +23,7 @@
 export const PLATFORMS = ['jobright', 'hiringcafe', 'indeed', 'glassdoor'];
 
 /** JobRight count at or above which the board top-up is not needed. */
-export const GOOD_JOBRIGHT = 5;
+export const GOOD_JOBRIGHT = 7;
 
 /** A run whose laptop has not checked in for this long is shown as stalled. */
 export const STALE_MS = 10 * 60 * 1000;

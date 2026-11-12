@@ -31,7 +31,7 @@ const TONE = {
 
 const FILTERS = [
   { key: 'all', label: 'All' },
-  { key: 'under', label: 'Under 5' },
+  { key: 'under', label: 'Under 7' },
   { key: 'live', label: 'Adding now' },
   { key: 'problem', label: 'Problems' },
   { key: 'europe', label: 'Europe' },
@@ -188,7 +188,7 @@ export default function JobsAddedReport() {
       if (!showPaused && r.paused && !r.total) return false;
       if (q && !r.email.includes(q) && !(r.name || '').toLowerCase().includes(q)) return false;
       const cells = Object.values(r.cells);
-      if (filter === 'under') return !r.paused && r.total < 5;
+      if (filter === 'under') return !r.paused && r.total < 7;
       if (filter === 'live') return cells.some((c) => c.state === 'running' || c.state === 'queued');
       if (filter === 'problem') return cells.some((c) => c.tone === 'bad' || c.tone === 'warn');
       if (filter === 'europe') return String(r.country).toLowerCase() === 'europe';
@@ -202,7 +202,7 @@ export default function JobsAddedReport() {
     return {
       clients: all.length,
       jobs: all.reduce((n, r) => n + r.total, 0),
-      under: all.filter((r) => r.total < 5).length,
+      under: all.filter((r) => r.total < 7).length,
       ...Object.fromEntries(PLATFORMS.map((p) => [p.key, sum(p.key)])),
     };
   }, [data]);
@@ -242,7 +242,7 @@ export default function JobsAddedReport() {
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
           <Stat label="Active clients" value={totals.clients} />
           <Stat label="Jobs added" value={totals.jobs} />
-          <Stat label="Under 5 jobs" value={totals.under} />
+          <Stat label="Under 7 jobs" value={totals.under} />
           {PLATFORMS.map((p) => <Stat key={p.key} label={p.label} value={totals[p.key]} />)}
         </div>
       ) : null}
