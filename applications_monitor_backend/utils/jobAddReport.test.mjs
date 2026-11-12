@@ -15,7 +15,7 @@ test('USA client with good JobRight: boards say not needed', () => {
   assert.equal(r.removed, 9);
   assert.match(r.summary, /9 more were added but removed later/);
   assert.equal(r.cells.hiringcafe.text, 'Not needed - JobRight gave 24');
-  assert.match(r.summary, /^24 jobs: JobRight 24\. JobRight was enough/);
+  assert.match(r.summary, /^JobRight 24\. JobRight was enough/);
 });
 
 test('Europe client: JobRight not used; saved reasons win', () => {
@@ -40,4 +40,15 @@ test('run banner goes stalled after 10 min without a heartbeat', () => {
   assert.equal(runState({ status: 'running', heartbeatAt: new Date(now - 60000) }, now).state, 'live');
   assert.equal(runState({ status: 'running', heartbeatAt: new Date(now - 30 * 60000) }, now).state, 'stalled');
   assert.equal(runState(null).state, 'none');
+});
+
+test('top-up ran: idle board says not run, not "not needed"', () => {
+  const r = buildRow({ email: 'h', country: 'UK' }, { jobright: 8, hiringcafe: 10, indeed: 7 });
+  assert.equal(r.cells.glassdoor.text, 'Not run');
+});
+
+test('Autopilot failed but team added jobs: says so', () => {
+  const r = buildRow({ email: 'k', country: 'USA' }, { jobright: 12 },
+    { platforms: { jobright: { state: 'failed', note: 'JobRight login failed (Google sign-in account)' } } });
+  assert.equal(r.cells.jobright.text, 'Autopilot: JobRight login failed (Google sign-in account). These 12 were added by the team.');
 });

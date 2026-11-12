@@ -144,6 +144,9 @@ export default function JobsAddedReport() {
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  // Paused/inactive clients with nothing added are hidden by default: dozens
+  // of rows that say "Client paused" four times bury the ones that matter.
+  const [showPaused, setShowPaused] = useState(false);
   const abortRef = useRef(null);
 
   const load = useCallback(async (which, quiet = false) => {
@@ -182,6 +185,7 @@ export default function JobsAddedReport() {
     const all = data?.rows || [];
     const q = query.trim().toLowerCase();
     return all.filter((r) => {
+      if (!showPaused && r.paused && !r.total) return false;
       if (q && !r.email.includes(q) && !(r.name || '').toLowerCase().includes(q)) return false;
       const cells = Object.values(r.cells);
       if (filter === 'under') return !r.paused && r.total < 5;
@@ -190,7 +194,7 @@ export default function JobsAddedReport() {
       if (filter === 'europe') return String(r.country).toLowerCase() === 'europe';
       return true;
     });
-  }, [data, query, filter]);
+  }, [data, query, filter, showPaused]);
 
   const totals = useMemo(() => {
     const all = (data?.rows || []).filter((r) => !r.paused);
@@ -252,8 +256,14 @@ export default function JobsAddedReport() {
             </button>
           ))}
         </div>
+        <div className="flex items-center gap-3">
+        <label className="flex items-center gap-1.5 text-xs text-slate-600">
+          <input type="checkbox" checked={showPaused} onChange={(e) => setShowPaused(e.target.checked)} />
+          Show paused ({(data?.rows || []).filter((r) => r.paused && !r.total).length})
+        </label>
         <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search email or name"
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm sm:w-64" />
+        </div>
       </div>
 
       <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">

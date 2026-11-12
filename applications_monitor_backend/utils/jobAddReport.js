@@ -72,7 +72,7 @@ function countryKind(country) {
 /**
  * The line a cell shows when the run recorded no reason of its own.
  * @param {string} platform
- * @param {{country:string, paused:boolean, jobright:number, runActive:boolean}} ctx
+ * @param {{country:string, paused:boolean, jobright:number, runActive:boolean, boardsRan?:boolean}} ctx
  */
 export function ruleNote(platform, ctx) {
   const kind = countryKind(ctx.country);
@@ -82,7 +82,9 @@ export function ruleNote(platform, ctx) {
     if (kind === 'europe') return 'Not used - Europe client (boards only)';
     return ctx.runActive ? 'Waiting for JobRight' : 'Not run';
   }
-  if (kind === 'jobright' && ctx.jobright >= GOOD_JOBRIGHT) {
+  // "Not needed" only while no board ran at all; once the top-up ran for this
+  // client (Ahmed: HiringCafe 10 + Indeed 7) a board with 0 simply did not run.
+  if (kind === 'jobright' && ctx.jobright >= GOOD_JOBRIGHT && !ctx.boardsRan) {
     return `Not needed - JobRight gave ${ctx.jobright}`;
   }
   if (ctx.runActive) return kind === 'europe' ? 'Waiting in the Europe run' : 'Waiting - top-up runs after JobRight';
@@ -101,7 +103,8 @@ export function buildRow(client, counts = {}, saved = null, runActive = false, r
   const n = (k) => Number(counts[k] || 0);
   const jobright = n('jobright');
   const byPlatform = { jobright, hiringcafe: n('hiringcafe'), indeed: n('indeed'), glassdoor: n('glassdoor') };
-  const ctx = { country: client.country, paused: !!client.paused, jobright, runActive };
+  const boardsRan = ['hiringcafe', 'indeed', 'glassdoor'].some((p) => byPlatform[p] > 0);
+  const ctx = { country: client.country, paused: !!client.paused, jobright, runActive, boardsRan };
   const cells = {};
   for (const p of PLATFORMS) {
     const s = (saved && saved.platforms && saved.platforms[p]) || {};
@@ -113,7 +116,10 @@ export function buildRow(client, counts = {}, saved = null, runActive = false, r
     if (state === 'running') text = count ? 'Adding now…' : 'Running now…';
     else if (state === 'queued') text = 'In the queue';
     else if (state === 'stopped') text = s.note || 'Run stopped before this finished';
-    else if (s.note) text = s.note;
+    else if (s.note && count && state === 'failed') {
+      // Karan: Autopilot login failed, yet 12 JobRight jobs - the team added them.
+      text = `Autopilot: ${s.note}. These ${count} were added by the team.`;
+    } else if (s.note) text = s.note;
     else if (!count) text = ruleNote(p, ctx);
     let tone = 'muted';
     if (count) tone = 'good';
@@ -148,7 +154,8 @@ export function summaryLine({ total, byPlatform, other, cells, ctx }) {
   const kind = countryKind(ctx.country);
   if (kind === 'none') return 'No country set, so nothing was added automatically.';
   if (ctx.paused && !total) return 'Client paused - no jobs added.';
-  let line = total ? `${total} job${total === 1 ? '' : 's'}: ${parts.join(' + ')}` : 'No jobs yet';
+  // The total is its own field (row.total); repeating it here read as "1010 jobs".
+  let line = total ? parts.join(' + ') : 'No jobs yet';
   if (live) return `${line}. Still adding right now.`;
   if (total >= GOOD_JOBRIGHT) {
     if (kind === 'jobright' && byPlatform.jobright >= GOOD_JOBRIGHT && !byPlatform.hiringcafe && !byPlatform.indeed && !byPlatform.glassdoor) {
