@@ -96,4 +96,9 @@ export async function ensureDbIndexes() {
     ChatMessageModel.collection.createIndex({ source: 1, 'escalation.adminNotifiedAt': 1, createdAt: 1 }),
     TagReminderModel.collection.createIndex({ jobId: 1, commentId: 1, userEmail: 1 }, { unique: true })
   ]);
+
+  // ── Jobs Added report (written by the Flashfire Autopilot, read by
+  // GET /api/job-add-report): one row per client per cap day.
+  const db = JobModel.db.db;
+  await db.collection('jobaddreports').createIndex({ day: 1, email: 1 }, { unique: true });
 }
