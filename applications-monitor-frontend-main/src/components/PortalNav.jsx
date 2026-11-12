@@ -17,6 +17,7 @@ const ITEMS = {
   extension: { to: '/extension-jobs-report', label: 'Extension Report', tone: 'bg-orange-600 hover:bg-orange-700', dot: 'border-orange-600' },
   performance: { to: '/operators-performance-report', label: 'Operators Performance', tone: 'bg-indigo-600 hover:bg-indigo-700', dot: 'border-indigo-600' },
   performanceReport: { to: '/operators-performance-report', label: 'Operators Performance Report', tone: 'bg-indigo-600 hover:bg-indigo-700', dot: 'border-indigo-600' },
+  jobsAdded: { to: '/jobs-added', label: 'Jobs Added', tone: 'bg-rose-600 hover:bg-rose-700', dot: 'border-rose-600' },
   onboarding: { to: '/client-onboarding', label: 'Client Onboarding', tone: 'bg-sky-600 hover:bg-sky-700', dot: 'border-sky-600' },
 };
 
@@ -30,11 +31,11 @@ function navItemsFor(user) {
   if (isOpsIntern || isTeamLead || isCsm) {
     const keys = [];
     if (isOpsIntern) keys.push('performanceReport');
-    if (isTeamLead || isCsm) keys.push('analysis', 'extension', 'performanceReport');
+    if (isTeamLead || isCsm) keys.push('analysis', 'extension', 'jobsAdded', 'performanceReport');
     if (isCsm) keys.push('onboarding');
     return [...new Set(keys)].map((key) => ITEMS[key]);
   }
-  return ['clients', 'plan', 'register', 'managers', 'analysis', 'scheduler', 'performance'].map((key) => ITEMS[key]);
+  return ['clients', 'plan', 'register', 'managers', 'analysis', 'jobsAdded', 'scheduler', 'performance'].map((key) => ITEMS[key]);
 }
 
 export default function PortalNav({ user }) {

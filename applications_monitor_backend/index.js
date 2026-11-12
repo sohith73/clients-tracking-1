@@ -77,6 +77,8 @@ import {
 } from './controllers/chatController.js';
 import { runChatEscalationSweep, runAdminDailyDigest, runTagDiscordReminders } from './utils/chatCrons.js';
 import { ClientCounterModel } from './ClientCounterModel.js';
+import { BUCKET_EXPR, buildRow, capDayWindow, runState } from './utils/jobAddReport.js';
+import { objectIdAt } from './utils/addWindow.js';
 import { OnboardingJobModel } from './OnboardingJobModel.js';
 import { ClientOperationsModel } from './ClientOperationsModel.js';
 import { setOtp, getOtp, deleteOtp, decrementAttempts, otpHash } from './utils/otpCache.js';
@@ -8074,6 +8076,59 @@ const deleteExtensionIncentiveComplaint = async (req, res) => {
     res.status(500).json({ error: error.message || 'Server error' });
   }
 };
+
+// Jobs Added report: per client per cap day, jobs added by each platform
+// (JobRight / HiringCafe / Indeed / Glassdoor) plus the Autopilot's one-line
+// reason wherever a platform added nothing. See utils/jobAddReport.js.
+// GET /api/job-add-report?date=YYYY-MM-DD   (default: today's cap day)
+const getJobAddReport = async (req, res) => {
+  try {
+    const day = String(req.query.date || addWindowDayStamp());
+    const win = capDayWindow(day);
+    if (!win) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    const db = mongoose.connection.db;
+    const [countRows, savedRows, run, clients] = await Promise.all([
+      db.collection('jobdbs').aggregate([
+        { $match: { _id: { $gte: objectIdAt(win.start), $lt: objectIdAt(win.end) } } },
+        { $group: {
+          _id: { u: { $toLower: { $ifNull: ['$userID', ''] } }, b: BUCKET_EXPR,
+                 gone: { $regexMatch: { input: { $ifNull: ['$currentStatus', ''] }, regex: /^(deleted|removed)/i } } },
+          n: { $sum: 1 } } },
+      ], { allowDiskUse: true }).toArray(),
+      db.collection('jobaddreports').find({ day }).toArray(),
+      db.collection('jobaddruns').findOne({ _id: day }),
+      ClientModel.find({}, { email: 1, name: 1, clientCountry: 1, status: 1, isPaused: 1 }).lean(),
+    ]);
+    const counts = new Map();
+    const removed = new Map();
+    for (const r of countRows) {
+      if (r._id.gone) { removed.set(r._id.u, (removed.get(r._id.u) || 0) + r.n); continue; }
+      if (!counts.has(r._id.u)) counts.set(r._id.u, {});
+      counts.get(r._id.u)[r._id.b] = r.n;
+    }
+    const saved = new Map(savedRows.map((r) => [String(r.email || '').toLowerCase(), r]));
+    const banner = runState(run);
+    const runActive = banner.state === 'live';
+    const rows = [];
+    for (const c of clients) {
+      const email = String(c.email || '').trim().toLowerCase();
+      if (!email) continue;
+      const active = String(c.status || '').toLowerCase() === 'active';
+      // Active clients always; anyone else only if something happened that day.
+      if (!active && !counts.has(email) && !saved.has(email) && !removed.has(email)) continue;
+      rows.push(buildRow(
+        { email, name: c.name, country: c.clientCountry, paused: !!c.isPaused || !active },
+        counts.get(email) || {}, saved.get(email) || null, runActive, removed.get(email) || 0,
+      ));
+    }
+    rows.sort((a, b) => (a.paused - b.paused) || (a.total - b.total) || a.name.localeCompare(b.name));
+    res.json({ day, today: addWindowDayStamp(), window: win, run: banner, rows });
+  } catch (error) {
+    console.error('Error in getJobAddReport:', error);
+    res.status(500).json({ error: 'Could not build the Jobs Added report' });
+  }
+};
+app.get('/api/job-add-report', verifyToken, getJobAddReport);
 
 // Extension report: visible to ALL authenticated users
 app.get('/api/extension-jobs-report', verifyToken, getExtensionJobsReport);
