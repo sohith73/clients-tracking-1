@@ -30,6 +30,7 @@ const ClientPreferences = React.lazy(() => import('./components/ClientPreference
 const OperatorsPerformanceReport = React.lazy(() => import('./components/OperatorsPerformanceReport.jsx'));
 const ExtensionJobsReport = React.lazy(() => import('./components/ExtensionJobsReport.jsx'));
 const JobsAddedReport = React.lazy(() => import('./components/JobsAddedReport.jsx'));
+const NotificationsPage = React.lazy(() => import('./components/NotificationsPage.jsx'));
 const ClientOnboarding = React.lazy(() => import('./components/ClientOnboarding.jsx'));
 const AdminSummariesPage = React.lazy(() => import('./components/AdminSummariesPage.jsx'));
 const AutoExtensionReport = React.lazy(() => import('./components/AutoExtensionReport.jsx'));
@@ -65,6 +66,7 @@ const router = createBrowserRouter([
       { path: '/operators-performance-report', element: <Lazy><OperatorsPerformanceReport /></Lazy> },
       { path: '/extension-jobs-report', element: <Lazy><ExtensionJobsReport /></Lazy> },
       { path: '/jobs-added', element: <Lazy><JobsAddedReport /></Lazy> },
+      { path: '/notifications', element: <Lazy><NotificationsPage /></Lazy> },
       { path: '/ai-summaries', element: <Lazy><AdminSummariesPage /></Lazy> },
       { path: '/auto-extension', element: <Lazy><AutoExtensionReport /></Lazy> }
     ]
