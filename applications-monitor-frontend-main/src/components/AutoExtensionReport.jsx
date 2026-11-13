@@ -26,6 +26,44 @@ const DASHBOARD_BASE = (import.meta.env.VITE_DASHBOARD_BASE || 'http://localhost
 // cancel routes are therefore open server-side, like the other portal-facing
 // dashboard routes; the routes only the autopilot calls stay gated.
 
+// The local autopilot app. It serves on 127.0.0.1:8765 by default. An operator
+// who runs it on another port/host can override with VITE_AUTOPILOT_BASE at
+// build time, or an 'ff-autopilot-base' localStorage key at runtime.
+//
+// The Run buttons OPEN it as a new tab (?autorun=...), a top-level navigation,
+// not a fetch. That sidesteps CORS entirely, and http://127.0.0.1 is a
+// secure-context exception, so this HTTPS portal can hand off to the plain-HTTP
+// autopilot on localhost with no mixed-content block. The autopilot strips the
+// param and starts the run; nothing happens on any other machine.
+function autopilotBase() {
+  let stored = '';
+  try { stored = localStorage.getItem('ff-autopilot-base') || ''; } catch { /* private mode */ }
+  return (stored || import.meta.env.VITE_AUTOPILOT_BASE || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+}
+
+// The five sources the autopilot can run for one client, in the order ops reads
+// them across the report. `key` is exactly what the autopilot's ?autorun=
+// expects (see autorunFromUrl in extension-autopilot/app.py).
+const RUN_SOURCES = [
+  { key: 'jobright', label: 'JobRight', tip: 'Opens the JobRight extension run for this client on your machine. The main source.' },
+  { key: 'indeed', label: 'Indeed', tip: 'Runs Indeed through its app API on your machine, using the saved job-API search.' },
+  { key: 'glassdoor', label: 'Glassdoor', tip: 'Runs Glassdoor in the Glassdoor Chrome on your machine. Each job spends one Apply click from the daily budget.' },
+  { key: 'hiringcafe', label: 'HiringCafe', tip: "Scrapes hiring.cafe for this client's role, last 24 hours only." },
+  { key: 'adzuna', label: 'Adzuna', tip: 'Runs Adzuna on the dashboard (no browser), using the saved job-API search.' }
+];
+
+// Sends both the Chrome profile (when Client Tracking has it) and the client
+// email. The autopilot matches on profile first, then falls back to email, so a
+// client with no stored profile still runs as long as it is assigned to the
+// machine. One of the two must be present.
+function openAutopilotRun(source, profile, email) {
+  const params = new URLSearchParams({ autorun: source });
+  if (profile) params.set('profile', profile);
+  if (email) params.set('email', email);
+  const url = `${autopilotBase()}/?${params.toString()}`;
+  window.open(url, '_blank', 'noopener');
+}
+
 const WINDOWS = [
   { days: 1, label: 'Today' },
   { days: 7, label: '7 days' },
@@ -702,6 +740,43 @@ function ClientRunDetail({ row, detail, loading, onClose, onScrape, live, queuei
               Close
             </button>
           </div>
+        </div>
+
+        <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Run a source on this machine
+            </h3>
+            <span className="text-[11px] text-slate-400">
+              opens your local autopilot · {autopilotBase().replace(/^https?:\/\//, '')}
+            </span>
+          </div>
+          {(row.profile || row.clientEmail) ? (
+            <div className="flex flex-wrap gap-2">
+              {RUN_SOURCES.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  title={s.tip}
+                  onClick={() => openAutopilotRun(s.key, row.profile, row.clientEmail)}
+                  className="group inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:border-orange-400 hover:bg-orange-50 hover:text-orange-700"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-orange-500 transition-colors group-hover:bg-orange-600" />
+                  Run {s.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-slate-500">
+              No Chrome profile or email on record for this client yet, so the autopilot can&apos;t be told which
+              one to run.
+            </p>
+          )}
+          <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+            Each button opens the autopilot on your machine and starts that source&apos;s run for this client.
+            The autopilot must already be running and logged in on this machine. Hover a button to see what it
+            does; nothing runs on any other machine.
+          </p>
         </div>
 
         <div className="px-5 py-4">
