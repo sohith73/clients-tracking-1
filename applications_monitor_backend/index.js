@@ -79,6 +79,7 @@ import { runChatEscalationSweep, runAdminDailyDigest, runTagDiscordReminders } f
 import { ClientCounterModel } from './ClientCounterModel.js';
 import { BUCKET_EXPR, buildRow, capDayWindow, runState } from './utils/jobAddReport.js';
 import { objectIdAt } from './utils/addWindow.js';
+import { parseDeliveryQuery, buildBaseMatch, withStatus, toCounts, istTodayRange, computeCoverage, ACTIVE_CLIENT_FILTER } from './utils/notificationsLog.js';
 import { OnboardingJobModel } from './OnboardingJobModel.js';
 import { ClientOperationsModel } from './ClientOperationsModel.js';
 import { setOtp, getOtp, deleteOtp, decrementAttempts, otpHash } from './utils/otpCache.js';
@@ -8129,6 +8130,58 @@ const getJobAddReport = async (req, res) => {
   }
 };
 app.get('/api/job-add-report', verifyToken, getJobAddReport);
+
+// Admin Notifications tab: every reminder delivery attempt across all clients.
+// Both collections are written by the dashboard backend; this side only reads.
+const getNotificationDeliveries = async (req, res) => {
+  const parsed = parseDeliveryQuery(req.query);
+  if (parsed.error) return res.status(400).json({ success: false, error: parsed.error });
+  try {
+    const col = mongoose.connection.collection('reminderdeliveries');
+    const base = buildBaseMatch(parsed.filters);
+    const rowsMatch = withStatus(base, parsed.status);
+    const [rows, total, groups] = await Promise.all([
+      col.find(rowsMatch).sort({ at: -1, _id: -1 })
+        .skip((parsed.page - 1) * parsed.pageSize).limit(parsed.pageSize).toArray(),
+      col.countDocuments(rowsMatch),
+      col.aggregate([{ $match: base }, { $group: { _id: '$status', n: { $sum: 1 } } }]).toArray(),
+    ]);
+    res.json({
+      success: true,
+      rows,
+      page: parsed.page,
+      pageSize: parsed.pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / parsed.pageSize)),
+      counts: toCounts(groups),
+    });
+  } catch (error) {
+    console.error('Error in getNotificationDeliveries:', error);
+    res.status(500).json({ success: false, error: 'Could not load notifications' });
+  }
+};
+const getNotificationSummary = async (req, res) => {
+  try {
+    const db = mongoose.connection;
+    const { start, end } = istTodayRange();
+    const [clients, configs, todayGroups] = await Promise.all([
+      db.collection('dashboardtrackings')
+        .find(ACTIVE_CLIENT_FILTER, { projection: { email: 1, name: 1, clientNumber: 1 } }).toArray(),
+      db.collection('clientreminderconfigs')
+        .find({}, { projection: { clientEmail: 1, items: 1, updatedBy: 1 } }).toArray(),
+      db.collection('reminderdeliveries').aggregate([
+        { $match: { at: { $gte: start, $lt: end } } },
+        { $group: { _id: '$status', n: { $sum: 1 } } },
+      ]).toArray(),
+    ]);
+    res.json({ success: true, coverage: computeCoverage(clients, configs), today: toCounts(todayGroups) });
+  } catch (error) {
+    console.error('Error in getNotificationSummary:', error);
+    res.status(500).json({ success: false, error: 'Could not load the notification summary' });
+  }
+};
+app.get('/api/notifications/deliveries', verifyToken, verifyAdmin, getNotificationDeliveries);
+app.get('/api/notifications/summary', verifyToken, verifyAdmin, getNotificationSummary);
 
 // Extension report: visible to ALL authenticated users
 app.get('/api/extension-jobs-report', verifyToken, getExtensionJobsReport);
