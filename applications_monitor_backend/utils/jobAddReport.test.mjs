@@ -25,7 +25,7 @@ test('Europe client: JobRight not used; saved reasons win', () => {
   assert.equal(r.cells.jobright.text, 'Not used - Europe client (boards only)');
   assert.equal(r.cells.hiringcafe.text, 'No new jobs on the board (last 48h)');
   assert.equal(r.cells.indeed.count, 1);
-  assert.match(r.summary, /below 7\. Main reason: no new jobs/);
+  assert.match(r.summary, /below 20\. Main reason: no new jobs/);
 });
 
 test('live run: running cell shows running, dead run shows stopped', () => {
