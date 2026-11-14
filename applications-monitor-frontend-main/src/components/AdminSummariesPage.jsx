@@ -17,6 +17,10 @@
 //   GET  /push-history?email=       — daily pushes (chart)
 //   GET  /uk-sponsor-only?email=    — UK client? sponsors-only switch + places
 //   POST /update-uk-sponsor-only    — flip the switch (UK clients only)
+//   GET  /au-sponsor-only?email=    : Australian client? sponsors-only switch
+//   POST /update-au-sponsor-only    : flip the switch (Australian clients only)
+//   GET  /eu-sponsor-only?email=    : Europe client? sponsors-only switch
+//   POST /update-eu-sponsor-only    : flip the switch (Europe clients only)
 
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import toast from 'react-hot-toast';
@@ -1103,6 +1107,12 @@ function ClientDetailPane({ row, onProfileChanged }) {
             {/* US H-1B sponsors only — rendered for US clients only */}
             <UsSponsorCard email={row.email} />
 
+            {/* Australia visa sponsors only: rendered for Australian clients only */}
+            <AuSponsorCard email={row.email} />
+
+            {/* Europe visa sponsors only: rendered for Europe clients only */}
+            <EuSponsorCard email={row.email} />
+
             {/* Target cap */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
                 <div className="flex items-start justify-between gap-3 mb-3">
@@ -2119,6 +2129,475 @@ function UsSponsorCard({ email }) {
             <div className="mt-3 text-[10px] text-slate-400">
                 {data.loaded
                     ? `${data.employers.toLocaleString()} H-1B and green card employers loaded on the server · data built ${data.builtAt ? new Date(data.builtAt).toLocaleDateString() : 'unknown'}`
+                    : 'Sponsor data is not loaded on the server, so the switch cannot be turned on.'}
+            </div>
+        </div>
+    );
+}
+
+// "Australia visa sponsors only" (dashboard backend Utils/auVisaSponsor.js).
+// Same shape as UsSponsorCard. Australia publishes no live sponsor register,
+// so the backend holds every list Home Affairs has released: current labour
+// agreements plus FOI snapshots of approved sponsors (2023 to 2025). It also
+// reads each posting and refuses "must have full Australian working rights".
+const AU_POSTING_REFUSAL = {
+    NO_SPONSORSHIP: 'says it will not sponsor a visa',
+    WORK_RIGHTS: 'needs full Australian working rights',
+    CITIZENS_ONLY: 'is for Australian citizens or permanent residents only',
+    CLEARANCE: 'needs an Australian security clearance (citizens only)',
+};
+const AU_MATCH_LABEL = { exact: 'exact match', prefix: 'brand match', compact: 'same name, spacing differs', alias: 'known brand' };
+
+function auMonthYear(iso) {
+    if (!iso) return '';
+    return new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' });
+}
+
+// "Labour agreement (Industry - Fishing), Sep 2026 · Accredited sponsor, Jan 2025".
+// lookup.sources is newest first, so the first list of each kind is its latest.
+function auEvidence(lookup, sources) {
+    const seen = new Set();
+    return (lookup.sources || []).flatMap((code) => {
+        const label = code === 'LA'
+            ? `Labour agreement${lookup.laTypes?.length ? ` (${lookup.laTypes.join(', ')})` : ''}`
+            : code.startsWith('A') ? 'Accredited sponsor' : 'Approved sponsor';
+        if (seen.has(label)) return [];
+        seen.add(label);
+        const asOf = sources[code]?.asOf;
+        return [asOf ? `${label}, ${auMonthYear(asOf)}` : label];
+    }).join(' · ');
+}
+
+function auLookupMessage(lookup, sources) {
+    if (lookup.error) return lookup.error;
+    if (!lookup.sponsor) {
+        return <>✗ Not on any Home Affairs sponsor list. Would be blocked.</>;
+    }
+    const how = AU_MATCH_LABEL[lookup.match] || 'match';
+    const evidence = auEvidence(lookup, sources);
+    if (lookup.posting?.refuses) {
+        return <>✗ <strong>{lookup.name}</strong> sponsors ({how} · {evidence}), but this posting {AU_POSTING_REFUSAL[lookup.posting.kind]}: “{lookup.posting.quote.replace(/[.!?]+$/, '')}”. Would be blocked.</>;
+    }
+    return <>✓ Sponsor: <strong>{lookup.name}</strong> ({how}) · {evidence}{lookup.posting ? '. The posting does not refuse sponsorship.' : ''}</>;
+}
+
+function AuSponsorCard({ email }) {
+    const [status, setStatus] = useState(null);
+    const [loadError, setLoadError] = useState('');
+    const [saving, setSaving] = useState(false);
+    const [company, setCompany] = useState('');
+    const [description, setDescription] = useState('');
+    const [lookup, setLookup] = useState(null);
+    const [lookingUp, setLookingUp] = useState(false);
+
+    async function load() {
+        setLoadError('');
+        try {
+            const r = await fetch(`${DASHBOARD_BASE}/au-sponsor-only?email=${encodeURIComponent(email)}`);
+            const body = await r.json().catch(() => null);
+            if (!r.ok || !body?.success) throw new Error(body?.message || `HTTP ${r.status}`);
+            setStatus(body);
+        } catch (e) {
+            setStatus(null);
+            setLoadError(e.message || 'Failed to load');
+        }
+    }
+
+    useEffect(() => {
+        setStatus(null);
+        setLookup(null);
+        setCompany('');
+        setDescription('');
+        load();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [email]);
+
+    async function toggle() {
+        if (!status) return;
+        const enabled = !status.enabled;
+        setSaving(true);
+        try {
+            const r = await fetch(`${DASHBOARD_BASE}/update-au-sponsor-only`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ email, enabled, updatedBy: 'admin-summaries-page' }),
+            });
+            const body = await r.json().catch(() => null);
+            if (!r.ok || !body?.success) throw new Error(body?.message || `HTTP ${r.status}`);
+            toast.success(enabled ? 'Australia visa sponsors only: ON' : 'Australia visa sponsors only: OFF');
+            await load();
+        } catch (e) {
+            toast.error(e.message || 'Save failed');
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function check(e) {
+        e.preventDefault();
+        const q = company.trim();
+        if (!q) return;
+        setLookingUp(true);
+        try {
+            const r = await fetch(`${DASHBOARD_BASE}/au-visa-sponsors/lookup`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ company: q, description }),
+            });
+            const body = await r.json().catch(() => null);
+            if (!r.ok || !body?.success) throw new Error(body?.message || `HTTP ${r.status}`);
+            setLookup(body);
+        } catch (err) {
+            setLookup({ error: err.message || 'Lookup failed' });
+        } finally {
+            setLookingUp(false);
+        }
+    }
+
+    if (loadError) {
+        return (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 text-xs text-red-700">
+                Australia visa sponsors: {loadError}
+            </div>
+        );
+    }
+    if (!status?.isAuClient) return null;
+
+    const data = status.data || {};
+    const sources = data.sources || {};
+    const on = status.enabled === true;
+    const laAsOf = auMonthYear(sources.LA?.asOf);
+    const newestFoi = auMonthYear(sources.A25?.asOf);
+
+    return (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+            <div className="flex items-start justify-between gap-3 mb-4">
+                <div>
+                    <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                        🇦🇺 Australia visa sponsors only
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                        When on, only jobs from employers that Home Affairs has approved to sponsor skilled visas
+                        (482, 186, 494) are added for <strong>this client</strong>, and never a posting that needs
+                        full Australian working rights or citizenship. Everything else is refused by the backend and
+                        shows as <em>blocked</em> in the extension, without using the daily cap.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={on}
+                    aria-label="Australia visa sponsors only"
+                    onClick={toggle}
+                    disabled={saving || (!on && !data.loaded)}
+                    className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${on ? 'bg-emerald-600' : 'bg-slate-300'}`}
+                >
+                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${on ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className={`px-2.5 py-1 rounded-full font-bold ${on ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                    {saving ? 'Saving…' : on ? 'On: approved sponsors only' : 'Off: all employers'}
+                </span>
+                <span className="text-slate-500">
+                    Country: <strong className="text-slate-700">Australia</strong>
+                    {status.countrySource === 'amountPaid' && ' (from the AUD payment; country not set in Client Job Analysis)'}
+                </span>
+                {status.updatedAt && (
+                    <span className="text-slate-400">
+                        · changed {new Date(status.updatedAt).toLocaleString()}
+                    </span>
+                )}
+            </div>
+
+            <form onSubmit={check} className="mt-4 pt-4 border-t border-slate-100">
+                <label htmlFor={`au-sponsor-check-${email}`} className="text-[10px] uppercase tracking-wide font-bold text-slate-500">
+                    Check an employer
+                </label>
+                <div className="flex gap-2 mt-1.5">
+                    <input
+                        id={`au-sponsor-check-${email}`}
+                        type="text"
+                        value={company}
+                        onChange={(e) => setCompany(e.target.value)}
+                        placeholder="e.g. Atlassian"
+                        maxLength={200}
+                        className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                        type="submit"
+                        disabled={lookingUp || !company.trim()}
+                        className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {lookingUp ? 'Checking…' : 'Check'}
+                    </button>
+                </div>
+                <label htmlFor={`au-sponsor-jd-${email}`} className="block mt-3 text-[10px] uppercase tracking-wide font-bold text-slate-500">
+                    Job description <span className="normal-case font-normal text-slate-400">(optional, to test the posting too)</span>
+                </label>
+                <textarea
+                    id={`au-sponsor-jd-${email}`}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Paste the posting to check for “must have full working rights”"
+                    rows={3}
+                    maxLength={60000}
+                    className="mt-1.5 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
+                />
+                {lookup && (
+                    <div role="status" className={`mt-2 text-xs rounded-lg px-3 py-2 border ${
+                        lookup.error ? 'bg-red-50 text-red-800 border-red-200'
+                            : lookup.sponsor && !lookup.posting?.refuses ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                    }`}>
+                        {auLookupMessage(lookup, sources)}
+                    </div>
+                )}
+            </form>
+
+            <div className="mt-3 text-[10px] text-slate-400">
+                {data.loaded
+                    ? `${data.employers.toLocaleString()} approved sponsors loaded on the server · labour agreements as at ${laAsOf || 'unknown'}, sponsor lists up to ${newestFoi || 'unknown'}. Home Affairs publishes no live register, so a sponsor approved after that may be missing.`
+                    : 'Sponsor data is not loaded on the server, so the switch cannot be turned on.'}
+            </div>
+        </div>
+    );
+}
+
+// "Europe visa sponsors only" (dashboard backend Utils/euVisaSponsor.js).
+// Only the Netherlands (IND recognised sponsors) and Ireland (employment
+// permits issued per company) publish employer lists, so the job's location
+// decides which check applies; elsewhere in Europe only the posting is read.
+const EU_POSTING_REFUSAL = {
+    NO_SPONSORSHIP: 'says it will not sponsor a visa',
+    WORK_RIGHTS: 'needs an existing right to work in the EU',
+    CITIZENS_ONLY: 'is for EU citizens only',
+};
+const EU_COUNTRY = { NL: 'the Netherlands', IE: 'Ireland' };
+
+function euEvidence(r) {
+    if (r.country === 'NL') return `IND recognised sponsor${r.kvk ? ` · KVK ${r.kvk}` : ''}`;
+    if (r.country === 'IE') {
+        const years = Object.entries(r.permits || {}).sort(([a], [b]) => b.localeCompare(a))
+            .map(([y, n]) => `${n.toLocaleString()} in ${y}`).join(', ');
+        return `Irish employment permits: ${years || 'none'}`;
+    }
+    return '';
+}
+
+function euLookupMessage(lookup) {
+    if (lookup.error) return lookup.error;
+    const how = AU_MATCH_LABEL[lookup.match] || 'match';
+    if (!lookup.sponsor) {
+        const failed = (lookup.checked || []).map((c) => c.country === 'NL'
+            ? 'Not an IND recognised sponsor, which a Dutch employer needs to hire a highly skilled migrant'
+            : c.reason === 'TOO_FEW_IRISH_PERMITS' ? `Too few Irish employment permits (${c.name})` : 'No Irish employment permits this year or last');
+        return <>✗ {failed.join('. ') || 'Not on a sponsor list'}. Would be blocked.</>;
+    }
+    const posting = lookup.posting?.refuses
+        ? <> But this posting {EU_POSTING_REFUSAL[lookup.posting.kind]}: “{lookup.posting.quote.replace(/[.!?]+$/, '')}”. Would be blocked.</>
+        : lookup.posting ? ' The posting does not refuse sponsorship.' : '';
+    if (lookup.basis === 'NO_LIST') {
+        const where = lookup.jobCountries?.length
+            ? 'This country publishes no employer list'
+            : 'No Dutch or Irish location given';
+        return <>{lookup.posting?.refuses ? '✗' : '✓'} {where}, so only the posting is checked.{posting}</>;
+    }
+    return <>{lookup.posting?.refuses ? '✗' : '✓'} Sponsor in {EU_COUNTRY[lookup.country]}: <strong>{lookup.name}</strong> ({how}) · {euEvidence(lookup)}.{posting}</>;
+}
+
+function EuSponsorCard({ email }) {
+    const [status, setStatus] = useState(null);
+    const [loadError, setLoadError] = useState('');
+    const [saving, setSaving] = useState(false);
+    const [company, setCompany] = useState('');
+    const [description, setDescription] = useState('');
+    const [location, setLocation] = useState('');
+    const [lookup, setLookup] = useState(null);
+    const [lookingUp, setLookingUp] = useState(false);
+
+    async function load() {
+        setLoadError('');
+        try {
+            const r = await fetch(`${DASHBOARD_BASE}/eu-sponsor-only?email=${encodeURIComponent(email)}`);
+            const body = await r.json().catch(() => null);
+            if (!r.ok || !body?.success) throw new Error(body?.message || `HTTP ${r.status}`);
+            setStatus(body);
+        } catch (e) {
+            setStatus(null);
+            setLoadError(e.message || 'Failed to load');
+        }
+    }
+
+    useEffect(() => {
+        setStatus(null);
+        setLookup(null);
+        setCompany('');
+        setDescription('');
+        setLocation('');
+        load();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [email]);
+
+    async function toggle() {
+        if (!status) return;
+        const enabled = !status.enabled;
+        setSaving(true);
+        try {
+            const r = await fetch(`${DASHBOARD_BASE}/update-eu-sponsor-only`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ email, enabled, updatedBy: 'admin-summaries-page' }),
+            });
+            const body = await r.json().catch(() => null);
+            if (!r.ok || !body?.success) throw new Error(body?.message || `HTTP ${r.status}`);
+            toast.success(enabled ? 'Europe visa sponsors only: ON' : 'Europe visa sponsors only: OFF');
+            await load();
+        } catch (e) {
+            toast.error(e.message || 'Save failed');
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function check(e) {
+        e.preventDefault();
+        const q = company.trim();
+        if (!q) return;
+        setLookingUp(true);
+        try {
+            const r = await fetch(`${DASHBOARD_BASE}/eu-visa-sponsors/lookup`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ company: q, location, description }),
+            });
+            const body = await r.json().catch(() => null);
+            if (!r.ok || !body?.success) throw new Error(body?.message || `HTTP ${r.status}`);
+            setLookup(body);
+        } catch (err) {
+            setLookup({ error: err.message || 'Lookup failed' });
+        } finally {
+            setLookingUp(false);
+        }
+    }
+
+    if (loadError) {
+        return (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 text-xs text-red-700">
+                Europe visa sponsors: {loadError}
+            </div>
+        );
+    }
+    if (!status?.isEuClient) return null;
+
+    const data = status.data || {};
+    const countries = data.countries || {};
+    const on = status.enabled === true;
+
+    return (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+            <div className="flex items-start justify-between gap-3 mb-4">
+                <div>
+                    <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                        🇪🇺 Europe visa sponsors only
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                        When on, a job in <strong>the Netherlands</strong> must be from an IND recognised sponsor and a
+                        job in <strong>Ireland</strong> from an employer issued employment permits; elsewhere in Europe
+                        any employer can hire on an EU Blue Card, so only the posting is checked. No posting may need an
+                        existing EU right to work. Everything else is refused for <strong>this client</strong> and shows
+                        as <em>blocked</em> in the extension, without using the daily cap.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={on}
+                    aria-label="Europe visa sponsors only"
+                    onClick={toggle}
+                    disabled={saving || (!on && !data.loaded)}
+                    className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${on ? 'bg-emerald-600' : 'bg-slate-300'}`}
+                >
+                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${on ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className={`px-2.5 py-1 rounded-full font-bold ${on ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                    {saving ? 'Saving…' : on ? 'On: sponsors only' : 'Off: all employers'}
+                </span>
+                <span className="text-slate-500">
+                    Country: <strong className="text-slate-700">Europe</strong>
+                    {status.countrySource === 'amountPaid' && ' (from the € payment; country not set in Client Job Analysis)'}
+                </span>
+                {status.updatedAt && (
+                    <span className="text-slate-400">
+                        · changed {new Date(status.updatedAt).toLocaleString()}
+                    </span>
+                )}
+            </div>
+
+            <form onSubmit={check} className="mt-4 pt-4 border-t border-slate-100">
+                <label htmlFor={`eu-sponsor-check-${email}`} className="text-[10px] uppercase tracking-wide font-bold text-slate-500">
+                    Check an employer
+                </label>
+                <div className="flex gap-2 mt-1.5">
+                    <input
+                        id={`eu-sponsor-check-${email}`}
+                        type="text"
+                        value={company}
+                        onChange={(e) => setCompany(e.target.value)}
+                        placeholder="e.g. Booking.com"
+                        maxLength={200}
+                        className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                        type="submit"
+                        disabled={lookingUp || !company.trim()}
+                        className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {lookingUp ? 'Checking…' : 'Check'}
+                    </button>
+                </div>
+                <label htmlFor={`eu-sponsor-loc-${email}`} className="block mt-3 text-[10px] uppercase tracking-wide font-bold text-slate-500">
+                    Job location <span className="normal-case font-normal text-slate-400">(decides which list applies)</span>
+                </label>
+                <input
+                    id={`eu-sponsor-loc-${email}`}
+                    type="text"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    placeholder="e.g. Amsterdam, Netherlands"
+                    maxLength={200}
+                    className="mt-1.5 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <label htmlFor={`eu-sponsor-jd-${email}`} className="block mt-3 text-[10px] uppercase tracking-wide font-bold text-slate-500">
+                    Job description <span className="normal-case font-normal text-slate-400">(optional, to test the posting too)</span>
+                </label>
+                <textarea
+                    id={`eu-sponsor-jd-${email}`}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Paste the posting to check for “must have the right to work in the EU”"
+                    rows={3}
+                    maxLength={60000}
+                    className="mt-1.5 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
+                />
+                {lookup && (
+                    <div role="status" className={`mt-2 text-xs rounded-lg px-3 py-2 border ${
+                        lookup.error ? 'bg-red-50 text-red-800 border-red-200'
+                            : lookup.sponsor && !lookup.posting?.refuses ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                    }`}>
+                        {euLookupMessage(lookup)}
+                    </div>
+                )}
+            </form>
+
+            <div className="mt-3 text-[10px] text-slate-400">
+                {data.loaded
+                    ? `${(countries.NL?.sponsors || 0).toLocaleString()} IND recognised sponsors (register of ${countries.NL?.asOf || 'unknown date'}) · ${(countries.IE?.sponsors || 0).toLocaleString()} Irish permit holders (to ${countries.IE?.asOf || 'unknown'}). Other European countries publish no employer list.`
                     : 'Sponsor data is not loaded on the server, so the switch cannot be turned on.'}
             </div>
         </div>
