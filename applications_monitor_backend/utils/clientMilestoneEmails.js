@@ -1,6 +1,5 @@
 import { sendGmailEmail } from "./gmailSender.js";
 import { getPlanLabel } from "./planCaps.js";
-import { postMilestoneToMattermost } from "./clientMattermost.js";
 import { unsubscribeLink, unsubscribeHeaders, UNSUB_STREAMS } from "./unsubscribe.js";
 
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@flashfirejobs.com";
@@ -139,7 +138,9 @@ function buildEmail(type, ctx) {
   throw new Error(`Unknown milestone email type: ${type}`);
 }
 
-export async function sendMilestoneEmail({ client, type, snapshot = {}, milestoneKey = null }) {
+// trigger: "manual" when an operator sent it (send-pending, resend, test);
+// anything else is the cron. Shown in the admin Notifications tab.
+export async function sendMilestoneEmail({ client, type, snapshot = {}, milestoneKey = null, trigger = "auto" }) {
   const toEmail = (client.paymentEmail || "").trim();
   if (!toEmail) {
     console.warn(`[Milestone] skip ${type} for ${client.email} — no paymentEmail`);
@@ -179,26 +180,8 @@ export async function sendMilestoneEmail({ client, type, snapshot = {}, mileston
     type: milestoneKey || type,
     clientEmail: client.email,
     snapshot: logSnapshot,
-    meta: { milestoneType: type, milestoneKey }
+    meta: { milestoneType: type, milestoneKey, trigger: trigger === "manual" ? "manual" : "auto" }
   });
-
-  // Mirror it into the client's Mattermost channel, only once the email was
-  // accepted: a failed send stays unsent and the sweep retries it, so posting
-  // on failure would ping the channel again on every retry. Fire-and-forget
-  // on purpose: the email is the product promise and its result is what this
-  // function returns, so a webhook that is missing, misconfigured or down
-  // must never change the outcome the caller sees or throw into the sweep.
-  if (result?.success) {
-    postMilestoneToMattermost({
-      client,
-      type,
-      ctx,
-      subject,
-      dashboardUrl: DASHBOARD_URL
-    }).catch((err) => {
-      console.warn(`[Milestone] mattermost mirror failed for ${client.email}:`, err?.message || err);
-    });
-  }
 
   return result;
 }

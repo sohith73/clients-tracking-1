@@ -12,7 +12,6 @@ import {
 } from '../utils/dashboardManagerSelect.js';
 import { fetchDashboardManagerFullNames } from '../utils/fetchDashboardManagerCatalog.js';
 import { apiFetch, getCached, invalidateCache } from '../utils/apiClient';
-import { rowDeliveryKeys, matchesDeliveryFilter, countDeliveryStates } from '../utils/deliveryStatus';
 
 const API_BASE = import.meta.env.VITE_BASE || 'https://clients-tracking-backend.onrender.com';
 // Scraper backend (local internal tool at DASH/scraper). Configurable via
@@ -255,19 +254,51 @@ function computeRowDerived(r) {
 // sentinel scrolls into view — keeps initial paint fast and DOM/RAM bounded.
 const ROW_CHUNK = 80;
 
+// The two signals the Delivery column paints, as filterable keys. One helper
+// feeds both the cell and the dropdown, so a filter can never hide a row while
+// the badge in it shows the very state that was selected.
+//   email - can we SEND to this client (a payment email is on file)
+//   mail  - can we still READ their inbox, which is what produces the
+//           interview, assignment and offer alerts in the first place
+function rowDeliveryKeys(email, payConn, mailConn) {
+  const em = String(email || '').toLowerCase();
+  return {
+    email: payConn.noPaymentEmail.has(em) ? 'missing' : 'ok',
+    mail: mailConn.connected.has(em) ? 'ok' : mailConn.reconnect.has(em) ? 'reconnect' : 'none',
+  };
+}
+
+// Empty filter matches all; an unrecognised value must not empty the table.
+function matchesDeliveryFilter(row, filter, payConn, mailConn) {
+  if (!filter) return true;
+  const k = rowDeliveryKeys(row?.email, payConn, mailConn);
+  switch (filter) {
+    case 'mail_ok': return k.mail === 'ok';
+    case 'mail_reconnect': return k.mail === 'reconnect';
+    case 'mail_none': return k.mail === 'none';
+    case 'email_ok': return k.email === 'ok';
+    case 'email_missing': return k.email === 'missing';
+    default: return true;
+  }
+}
+
+function countDeliveryStates(rows, payConn, mailConn) {
+  const c = { mail_ok: 0, mail_reconnect: 0, mail_none: 0, email_ok: 0, email_missing: 0 };
+  for (const r of rows) {
+    const k = rowDeliveryKeys(r.email, payConn, mailConn);
+    c[`mail_${k.mail}`] += 1;
+    c[`email_${k.email}`] += 1;
+  }
+  return c;
+}
+
 export default function ClientJobAnalysis() {
   const [date, setDate] = useState('');
   const [rows, setRows] = useState([]);
-  // Mattermost readiness per client email (for the "Mattermost" column).
-  // Loaded separately from the heavy analysis endpoint; refreshed on load + Refresh.
-  //   withWebhook   - a webhook URL is saved for this client
-  //   failing       - saved, but its last real delivery attempt errored
-  //   noPaymentEmail- no payment email on file, so the email half cannot send
-  const [mmConn, setMmConn] = useState({
-    withWebhook: new Set(),
-    failing: new Set(),
-    noPaymentEmail: new Set()
-  });
+  // Clients with no payment email on file, so nothing we email can reach
+  // them (the Delivery column badge). Loaded separately from the heavy
+  // analysis endpoint; refreshed on load + Refresh.
+  const [payConn, setPayConn] = useState({ noPaymentEmail: new Set() });
   // Google-mail connection, shown as a small second dot in the same cell. It is
   // a different question from "can we reach them": this is whether we can still
   // READ their inbox, which is what produces the interview and offer alerts in
@@ -324,8 +355,7 @@ export default function ClientJobAnalysis() {
   // the clients still waiting on one, so the column needs a way to list them.
   const [jobrightFilter, setJobrightFilter] = useState('');
   // Delivery column: '' | mail_ok | mail_reconnect | mail_none
-  //                     | hook_ok | hook_failing | hook_missing
-  //                     | no_payment_email
+  //                     | email_ok | email_missing
   const [deliveryFilter, setDeliveryFilter] = useState('');
   const [addSortDir, setAddSortDir] = useState(null);     // null | 'worst' | 'best'
   const [alertFilter, setAlertFilter] = useState('');     // '' | stripe_mismatch | no_adds | not_applied
@@ -450,25 +480,21 @@ export default function ClientJobAnalysis() {
     }
   }, [convertToDMY]);
 
-  // Load Mattermost readiness AND Google-mail connection (separate, lightweight
+  // Load payment-email readiness AND Google-mail connection (separate, lightweight
   // endpoints, fetched together). Non-blocking and independent: if one fails the
   // other still renders, rather than blanking the whole column.
   const loadMailConnection = useCallback(async () => {
     const toSet = (v) => new Set((v || []).map((e) => String(e).toLowerCase()));
 
-    const [mm, gm] = await Promise.allSettled([
-      fetch(`${API_BASE}/api/clients/mattermost-status`, { headers: AUTH_HEADERS() }),
+    const [pe, gm] = await Promise.allSettled([
+      fetch(`${API_BASE}/api/clients/payment-email-status`, { headers: AUTH_HEADERS() }),
       fetch(`${API_BASE}/api/clients/mail-connection`, { headers: AUTH_HEADERS() })
     ]);
 
     try {
-      if (mm.status === 'fulfilled' && mm.value.ok) {
-        const data = await mm.value.json().catch(() => ({}));
-        setMmConn({
-          withWebhook: toSet(data.withWebhook),
-          failing: toSet(data.failing),
-          noPaymentEmail: toSet(data.noPaymentEmail)
-        });
+      if (pe.status === 'fulfilled' && pe.value.ok) {
+        const data = await pe.value.json().catch(() => ({}));
+        setPayConn({ noPaymentEmail: toSet(data.noPaymentEmail) });
       }
     } catch {
       /* non-blocking */
@@ -997,12 +1023,12 @@ export default function ClientJobAnalysis() {
     return { yes, no: rows.length - yes };
   }, [rows]);
 
-  // Depends on mmConn/mailConn as well as rows: those two Sets load from a
+  // Depends on payConn/mailConn as well as rows: those two Sets load from a
   // separate, lighter endpoint than the analysis payload, so the counts have to
   // recompute when they arrive or the dropdown would read all-zero on first paint.
   const deliveryCounts = useMemo(
-    () => countDeliveryStates(rows, mmConn, mailConn),
-    [rows, mmConn, mailConn],
+    () => countDeliveryStates(rows, payConn, mailConn),
+    [rows, payConn, mailConn],
   );
 
   // Memoize filtered + sorted rows: active first, then by clientNumber ascending (same as Client Onboarding)
@@ -1031,7 +1057,7 @@ export default function ClientJobAnalysis() {
     else if (planFilter) filtered = filtered.filter(r => rowPlanKey(r) === planFilter);
     if (jobrightFilter === 'yes') filtered = filtered.filter(r => r.jobrightCreated === true);
     else if (jobrightFilter === 'no') filtered = filtered.filter(r => r.jobrightCreated !== true);
-    if (deliveryFilter) filtered = filtered.filter(r => matchesDeliveryFilter(r, deliveryFilter, mmConn, mailConn));
+    if (deliveryFilter) filtered = filtered.filter(r => matchesDeliveryFilter(r, deliveryFilter, payConn, mailConn));
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       filtered = filtered.filter(r => {
@@ -1087,7 +1113,7 @@ export default function ClientJobAnalysis() {
     // Attach derived cap/status math once per data change so per-render row
     // output stays cheap.
     return sorted.map((r) => ({ ...r, _d: computeRowDerived(r) }));
-  }, [rows, date, sortDir, sinceSortDir, addSortDir, lastAppliedByFilter, statusFilter, phaseFilter, addFilter, alertFilter, countryFilter, dashboardMgrFilter, planFilter, jobrightFilter, deliveryFilter, mmConn, mailConn, searchQuery, getSortingNumber]);
+  }, [rows, date, sortDir, sinceSortDir, addSortDir, lastAppliedByFilter, statusFilter, phaseFilter, addFilter, alertFilter, countryFilter, dashboardMgrFilter, planFilter, jobrightFilter, deliveryFilter, payConn, mailConn, searchQuery, getSortingNumber]);
 
   // ── Chunked rendering: mount ROW_CHUNK rows at a time, growing as a sentinel
   // scrolls into view. Bounds initial paint cost + DOM size for big tables. ──
@@ -1419,23 +1445,11 @@ export default function ClientJobAnalysis() {
                 <ul className="space-y-1">
                   <li className="flex items-start gap-2">
                     <span className="mt-px inline-flex shrink-0 items-center rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">Yes</span>
-                    <span>Mattermost webhook saved, and its last delivery actually worked.</span>
+                    <span>A payment email is on file, so reminders, onboarding and milestone emails reach them.</span>
                   </li>
                   <li className="flex items-start gap-2">
-                    <span className="mt-px inline-flex shrink-0 items-center rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">Hook only</span>
-                    <span>Webhook works, but there is no payment email, so the email half cannot send.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="mt-px inline-flex shrink-0 items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Reconnect</span>
-                    <span>A webhook is saved but its last real delivery failed. Re-check the URL in Operations &gt; Client Reminders.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="mt-px inline-flex shrink-0 items-center rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">No hook</span>
-                    <span>No Mattermost webhook. Email still reaches them.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="mt-px inline-flex shrink-0 items-center rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">None</span>
-                    <span><strong>Nothing can reach this client.</strong> No webhook and no payment email.</span>
+                    <span className="mt-px inline-flex shrink-0 items-center rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">No email</span>
+                    <span><strong>Nothing we send can reach this client.</strong> Add their payment email in Client Onboarding.</span>
                   </li>
                 </ul>
               </div>
@@ -1497,15 +1511,13 @@ export default function ClientJobAnalysis() {
                     }
                     value={deliveryFilter}
                     onChange={setDeliveryFilter}
-                    title="Filter by what we can reach this client on. Mail = the small G dot (can we READ their inbox). Hook = the Mattermost badge (can we SEND to them)."
+                    title="Filter by what we can reach this client on. Mail = the small G dot (can we READ their inbox). Email = the badge (can we SEND to them)."
                     options={[
                       { value: 'mail_none', label: `Mail: not connected (${deliveryCounts.mail_none})` },
                       { value: 'mail_reconnect', label: `Mail: reconnect (${deliveryCounts.mail_reconnect})` },
                       { value: 'mail_ok', label: `Mail: connected (${deliveryCounts.mail_ok})` },
-                      { value: 'hook_missing', label: `Hook: missing (${deliveryCounts.hook_missing})` },
-                      { value: 'hook_failing', label: `Hook: failing (${deliveryCounts.hook_failing})` },
-                      { value: 'hook_ok', label: `Hook: working (${deliveryCounts.hook_ok})` },
-                      { value: 'no_payment_email', label: `No payment email (${deliveryCounts.no_payment_email})` },
+                      { value: 'email_missing', label: `No payment email (${deliveryCounts.email_missing})` },
+                      { value: 'email_ok', label: `Payment email on file (${deliveryCounts.email_ok})` },
                     ]}
                   />
                 </th>
@@ -1835,30 +1847,20 @@ export default function ClientJobAnalysis() {
                         // TWO signals in one cell, because they answer two
                         // different questions and losing either one hides a real
                         // failure:
-                        //   the word badge - can we REACH this client (Mattermost
-                        //     webhook + payment email)
+                        //   the word badge - can we REACH this client (a
+                        //     payment email is on file)
                         //   the G dot      - can we still READ their inbox, which
                         //     is what produces the interview and offer alerts
                         // The dot is 8px, so the second signal costs no width.
                         // Same helper the Delivery dropdown filters on, so a
                         // row can never be hidden by a selection that disagrees
                         // with the badge printed in it.
-                        const dk = rowDeliveryKeys(r.email, mmConn, mailConn);
-                        const hasHook = dk.hook !== 'missing';
-                        const isFailing = dk.hook === 'failing';
-                        const noPay = dk.noPay;
+                        const dk = rowDeliveryKeys(r.email, payConn, mailConn);
                         const cls = 'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold';
 
-                        let badge;
-                        if (hasHook && !isFailing) {
-                          badge = <span className={`${cls} bg-green-100 text-green-700`} title={noPay ? 'Mattermost webhook connected and working. No payment email on file, so the email half cannot send.' : 'Mattermost webhook connected and its last delivery succeeded.'}>{noPay ? 'Hook only' : 'Yes'}</span>;
-                        } else if (hasHook && isFailing) {
-                          badge = <span className={`${cls} bg-amber-100 text-amber-700`} title="A webhook is saved but its last real delivery failed. Re-check the URL in Operations > Client Reminders.">Reconnect</span>;
-                        } else if (noPay) {
-                          badge = <span className={`${cls} bg-red-100 text-red-700`} title="No Mattermost webhook AND no payment email. Nothing we send can reach this client at all.">None</span>;
-                        } else {
-                          badge = <span className={`${cls} bg-red-100 text-red-700`} title="No Mattermost webhook saved. Email still works.">No hook</span>;
-                        }
+                        const badge = dk.email === 'ok'
+                          ? <span className={`${cls} bg-green-100 text-green-700`} title="Payment email on file. Our emails reach this client.">Yes</span>
+                          : <span className={`${cls} bg-red-100 text-red-700`} title="No payment email on file. Nothing we send can reach this client.">No email</span>;
 
                         const gConnected = dk.mail === 'ok';
                         const gReconnect = dk.mail === 'reconnect';

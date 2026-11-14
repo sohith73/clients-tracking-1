@@ -79,7 +79,10 @@ import { runChatEscalationSweep, runAdminDailyDigest, runTagDiscordReminders } f
 import { ClientCounterModel } from './ClientCounterModel.js';
 import { BUCKET_EXPR, buildRow, capDayWindow, runState } from './utils/jobAddReport.js';
 import { objectIdAt } from './utils/addWindow.js';
-import { parseDeliveryQuery, buildBaseMatch, withStatus, toCounts, istTodayRange, computeCoverage, ACTIVE_CLIENT_FILTER } from './utils/notificationsLog.js';
+import {
+  parseDeliveryQuery, buildHistoryAggregation, computeScheduled, filterScheduled, toCounts, istDayString,
+  escapeRegex as escapeNotificationSearch, computeCoverage, ACTIVE_CLIENT_FILTER,
+} from './utils/notificationsLog.js';
 import { OnboardingJobModel } from './OnboardingJobModel.js';
 import { ClientOperationsModel } from './ClientOperationsModel.js';
 import { setOtp, getOtp, deleteOtp, decrementAttempts, otpHash } from './utils/otpCache.js';
@@ -5259,47 +5262,13 @@ const getRevenueStats = async (req, res) => {
 // email OR ownerEmail matches their account email; "reconnect" when their only
 // mailbox has a dead Google token (gmailpollstates.authErrorAt, written by the
 // dashboard mail poller).
-// Mattermost + payment-email readiness per client, for the MATTERMOST column
-// on Client Job Analysis.
-//
-// The webhook is stored by the DASHBOARD service on `clientreminderconfigs`
-// (Operations > Client Reminders). Read raw rather than through a model: that
-// schema belongs to the other service and duplicating it here is how the two
-// silently diverge. Two projected fields cannot drift.
-//
-// `failing` is derived from the delivery history the reminder worker writes, so
-// "connected" here means a webhook that actually delivered, not merely one that
-// somebody pasted in. A webhook that 404s looks identical to a good one until
-// you look at what happened when it was last used.
-app.get('/api/clients/mattermost-status', async (req, res) => {
+// Which clients have no payment email on file, for the email-reach badge on
+// Client Job Analysis. Every client notification (reminders, onboarding,
+// milestones, inbox alerts) goes to the payment email, so a client without one
+// hears nothing from us.
+app.get('/api/clients/payment-email-status', verifyToken, async (req, res) => {
   try {
-    const db = mongoose.connection.db;
-
-    const configs = await db
-      .collection('clientreminderconfigs')
-      .find({}, { projection: { clientEmail: 1, mattermostWebhookUrl: 1, history: { $slice: 10 } } })
-      .toArray();
-
-    const withWebhook = [];
-    const failing = [];
-
-    for (const c of configs) {
-      const email = String(c.clientEmail || '').toLowerCase();
-      if (!email) continue;
-      const hook = String(c.mattermostWebhookUrl || '').trim();
-      if (!hook) continue;
-      withWebhook.push(email);
-
-      // Newest-first history. The first row that actually attempted Mattermost
-      // is the verdict; rows for email-only sends say nothing about the hook.
-      const attempt = (Array.isArray(c.history) ? c.history : []).find(
-        (h) => h && h.mattermost && h.mattermost.attempted === true
-      );
-      if (attempt && attempt.mattermost.ok !== true) failing.push(email);
-    }
-
-    // Payment email lives on the client record this service owns.
-    const clients = await db
+    const clients = await mongoose.connection.db
       .collection('dashboardtrackings')
       .find({}, { projection: { email: 1, paymentEmail: 1 } })
       .toArray();
@@ -5307,11 +5276,10 @@ app.get('/api/clients/mattermost-status', async (req, res) => {
       .filter((c) => !String(c.paymentEmail || '').trim())
       .map((c) => String(c.email || '').toLowerCase())
       .filter(Boolean);
-
-    res.json({ withWebhook, failing, noPaymentEmail });
+    res.json({ noPaymentEmail });
   } catch (e) {
-    console.error('mattermost-status error', e?.message || e);
-    res.status(500).json({ error: 'mattermost_status_failed' });
+    console.error('payment-email-status error', e?.message || e);
+    res.status(500).json({ error: 'payment_email_status_failed' });
   }
 });
 
@@ -5981,7 +5949,8 @@ app.post('/api/clients/:email/send-pending-milestones', verifyToken, verifyAdmin
       client,
       type: highest.type,
       milestoneKey: highest.key,
-      snapshot: { planCap, currentCount, threshold: highest.threshold }
+      snapshot: { planCap, currentCount, threshold: highest.threshold },
+      trigger: 'manual'
     });
 
     // Only mark milestones sent when the email actually went out. A failed
@@ -6051,7 +6020,8 @@ app.post('/api/clients/:email/resend-milestone', verifyToken, verifyAdmin, async
       client,
       type: target.type,
       milestoneKey: target.key,
-      snapshot: { planCap, currentCount, threshold: target.threshold }
+      snapshot: { planCap, currentCount, threshold: target.threshold },
+      trigger: 'manual'
     });
 
     if (sendResult?.success) {
@@ -6108,7 +6078,8 @@ const handleTestMilestoneEmail = async (req, res) => {
       client,
       type,
       milestoneKey: `test_${type}_${count}`,
-      snapshot: { planCap: count, currentCount: count, threshold: count }
+      snapshot: { planCap: count, currentCount: count, threshold: count },
+      trigger: 'manual'
     });
 
     res.json({ ok: !!result?.success, to: email, type, count, planType, result });
@@ -8131,50 +8102,102 @@ const getJobAddReport = async (req, res) => {
 };
 app.get('/api/job-add-report', verifyToken, getJobAddReport);
 
-// Admin Notifications tab: every reminder delivery attempt across all clients.
-// Both collections are written by the dashboard backend; this side only reads.
+// Admin Notifications tab: every email Flashfire sends a client (daily
+// summary, onboarding sequence, plan milestones, inbox alerts) plus the team's
+// no-activity alert, in one list, and what is scheduled next. The sources are
+// written by the dashboard backend and by this service's milestone mailer;
+// this side only reads. See utils/notificationsLog.js.
+
+/** Client emails whose tracked name matches the search, for rows that carry no name. */
+async function emailsMatchingName(db, search) {
+  if (!search) return [];
+  const rx = new RegExp(escapeNotificationSearch(search), 'i');
+  const docs = await db.collection('dashboardtrackings')
+    .find({ name: rx }, { projection: { email: 1 } }).limit(500).toArray();
+  return docs.map((d) => String(d.email || '').toLowerCase()).filter(Boolean);
+}
+
+/** Everything computeScheduled needs: active clients, their configs, live onboarding sequences. */
+async function loadScheduleInputs(db) {
+  const [clients, configs, onboarding] = await Promise.all([
+    db.collection('dashboardtrackings')
+      .find(ACTIVE_CLIENT_FILTER, { projection: { email: 1, name: 1, clientNumber: 1, paymentEmail: 1 } }).toArray(),
+    db.collection('clientreminderconfigs')
+      .find({}, { projection: { clientEmail: 1, clientName: 1, items: 1, updatedBy: 1, paymentEmailOverride: 1 } }).toArray(),
+    db.collection('onboardingmailstates')
+      .find({ status: 'scheduled' }, { projection: { clientEmail: 1, clientName: 1, paymentEmail: 1, status: 1, steps: 1 } }).toArray(),
+  ]);
+  return { clients, configs, onboarding };
+}
+
+/** Run the merged history aggregation; one document { rows, total, counts }. */
+async function runHistory(db, args) {
+  const { coll, pipeline } = buildHistoryAggregation(args);
+  const [facet] = await db.collection(coll).aggregate(pipeline).toArray();
+  return facet || { rows: [], total: [], counts: [] };
+}
+
+/** Milestone and inbox rows carry no client name; fill it from dashboardtrackings. */
+async function fillClientNames(db, rows) {
+  const missing = [...new Set(rows.filter((r) => !r.clientName && r.clientEmail).map((r) => r.clientEmail))];
+  if (!missing.length) return rows;
+  const docs = await db.collection('dashboardtrackings')
+    .find({ email: { $in: missing } }, { projection: { email: 1, name: 1 } }).toArray();
+  const names = new Map(docs.map((d) => [String(d.email || '').toLowerCase(), d.name || '']));
+  return rows.map((r) => (r.clientName ? r : { ...r, clientName: names.get(r.clientEmail) || '' }));
+}
+
 const getNotificationDeliveries = async (req, res) => {
   const parsed = parseDeliveryQuery(req.query);
   if (parsed.error) return res.status(400).json({ success: false, error: parsed.error });
   try {
-    const col = mongoose.connection.collection('reminderdeliveries');
-    const base = buildBaseMatch(parsed.filters);
-    const rowsMatch = withStatus(base, parsed.status);
-    const [rows, total, groups] = await Promise.all([
-      col.find(rowsMatch).sort({ at: -1, _id: -1 })
-        .skip((parsed.page - 1) * parsed.pageSize).limit(parsed.pageSize).toArray(),
-      col.countDocuments(rowsMatch),
-      col.aggregate([{ $match: base }, { $group: { _id: '$status', n: { $sum: 1 } } }]).toArray(),
+    const db = mongoose.connection.db;
+    const searchEmails = await emailsMatchingName(db, parsed.filters.search);
+    const [history, inputs] = await Promise.all([
+      runHistory(db, { filters: parsed.filters, status: parsed.status, page: parsed.page, pageSize: parsed.pageSize, searchEmails }),
+      loadScheduleInputs(db),
     ]);
+    const scheduled = filterScheduled(computeScheduled({ ...inputs, now: new Date() }), parsed.filters, searchEmails);
+
+    let rows;
+    let total;
+    if (parsed.status === 'scheduled') {
+      total = scheduled.length;
+      rows = scheduled.slice((parsed.page - 1) * parsed.pageSize, parsed.page * parsed.pageSize);
+    } else {
+      total = history.total[0]?.n || 0;
+      rows = history.rows;
+    }
     res.json({
       success: true,
-      rows,
+      rows: await fillClientNames(db, rows),
       page: parsed.page,
       pageSize: parsed.pageSize,
       total,
       totalPages: Math.max(1, Math.ceil(total / parsed.pageSize)),
-      counts: toCounts(groups),
+      counts: toCounts(history.counts, scheduled.length),
     });
   } catch (error) {
     console.error('Error in getNotificationDeliveries:', error);
     res.status(500).json({ success: false, error: 'Could not load notifications' });
   }
 };
+
 const getNotificationSummary = async (req, res) => {
   try {
-    const db = mongoose.connection;
-    const { start, end } = istTodayRange();
-    const [clients, configs, todayGroups] = await Promise.all([
-      db.collection('dashboardtrackings')
-        .find(ACTIVE_CLIENT_FILTER, { projection: { email: 1, name: 1, clientNumber: 1 } }).toArray(),
-      db.collection('clientreminderconfigs')
-        .find({}, { projection: { clientEmail: 1, items: 1, updatedBy: 1 } }).toArray(),
-      db.collection('reminderdeliveries').aggregate([
-        { $match: { at: { $gte: start, $lt: end } } },
-        { $group: { _id: '$status', n: { $sum: 1 } } },
-      ]).toArray(),
+    const db = mongoose.connection.db;
+    const today = istDayString();
+    const todayFilters = { from: today, to: today };
+    const [inputs, history] = await Promise.all([
+      loadScheduleInputs(db),
+      runHistory(db, { filters: todayFilters, page: 1, pageSize: 1 }),
     ]);
-    res.json({ success: true, coverage: computeCoverage(clients, configs), today: toCounts(todayGroups) });
+    const scheduledToday = filterScheduled(computeScheduled({ ...inputs, now: new Date() }), todayFilters);
+    res.json({
+      success: true,
+      coverage: computeCoverage(inputs.clients, inputs.configs),
+      today: toCounts(history.counts, scheduledToday.length),
+    });
   } catch (error) {
     console.error('Error in getNotificationSummary:', error);
     res.status(500).json({ success: false, error: 'Could not load the notification summary' });
