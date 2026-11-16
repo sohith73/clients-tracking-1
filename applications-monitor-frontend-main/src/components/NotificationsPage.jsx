@@ -67,6 +67,7 @@ const REASON = {
   nothing_added: 'No roles added that day, so nothing to report',
   client_is_active: 'Client was active, so no alert',
   only_if_roles_added: 'Goes out only if roles were added that day',
+  sunday_hold: 'No client emails on Sundays, so this goes out Monday',
   no_payment_email: 'No payment email on file',
   'email: no_payment_email': 'No payment email on file',
   no_internal_email: 'No team inbox configured',

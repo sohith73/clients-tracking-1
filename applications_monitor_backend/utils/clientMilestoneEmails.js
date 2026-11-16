@@ -1,4 +1,5 @@
 import { sendGmailEmail } from "./gmailSender.js";
+import { isClientMailOffDay, CLIENT_MAIL_HOLD_REASON } from "./clientMailDays.js";
 import { getPlanLabel } from "./planCaps.js";
 import { unsubscribeLink, unsubscribeHeaders, UNSUB_STREAMS } from "./unsubscribe.js";
 
@@ -141,6 +142,12 @@ function buildEmail(type, ctx) {
 // trigger: "manual" when an operator sent it (send-pending, resend, test);
 // anything else is the cron. Shown in the admin Notifications tab.
 export async function sendMilestoneEmail({ client, type, snapshot = {}, milestoneKey = null, trigger = "auto" }) {
+  // No client mail on Sundays (IST). The sweep and the admin routes already
+  // stop first; this is the backstop for any other caller. Staff test sends
+  // (test_* keys) are not client mail.
+  if (isClientMailOffDay() && !String(milestoneKey || "").startsWith("test_")) {
+    return { skipped: true, reason: CLIENT_MAIL_HOLD_REASON };
+  }
   const toEmail = (client.paymentEmail || "").trim();
   if (!toEmail) {
     console.warn(`[Milestone] skip ${type} for ${client.email} — no paymentEmail`);
