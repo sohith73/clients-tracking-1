@@ -66,7 +66,8 @@ const RESULT = {
 const REASON = {
   nothing_added: 'No roles added that day, so nothing to report',
   client_is_active: 'Client was active, so no alert',
-  only_if_roles_added: 'Goes out only if roles were added that day',
+  only_if_roles_added: 'Goes out only if 5+ roles were added and 5+ applied that day',
+  below_minimum: 'Fewer than 5 roles added or 5 applied that day, so not sent',
   sunday_hold: 'No client emails on Sundays, so this goes out Monday',
   no_payment_email: 'No payment email on file',
   'email: no_payment_email': 'No payment email on file',
@@ -150,7 +151,7 @@ function CoverageCard({ summary, error, onRetry }) {
             Reaches {coverage.covered} of {coverage.activeClients} active clients
           </p>
           <p className="mt-0.5 text-sm text-slate-500">
-            Every active, unpaused client gets it by email at 21:30 IST on days roles were added.
+            Every active, unpaused client gets it by email at 21:30 IST on days with at least 5 roles added and 5 applied. Never on Sundays.
           </p>
           {full ? (
             <p className="mt-0.5 text-sm text-emerald-700">Every active client is covered.</p>
@@ -208,7 +209,7 @@ function SkeletonRows() {
 
 function Details({ row }) {
   if (row.kind === 'daily_summary' && row.status !== 'scheduled') {
-    return <span>{row.added ?? 0} added</span>;
+    return <span>{row.added ?? 0} added · {row.applied ?? 0} applied</span>;
   }
   if (row.kind === 'milestone' && Number.isFinite(row.applied)) {
     return <span>{row.applied} applied</span>;
@@ -221,7 +222,11 @@ function Details({ row }) {
 
 function Row({ row }) {
   const when = fmtDate(row.at);
-  const res = RESULT[row.status] || { label: row.status || 'Unknown', cls: 'bg-slate-100 text-slate-600' };
+  // A light day the daily summary stayed quiet on reads "Below 5", not a
+  // bare "Skipped", so the team can tell it apart at a glance.
+  const res = row.reason === 'below_minimum'
+    ? { label: 'Below 5', cls: 'bg-amber-50 text-amber-800' }
+    : RESULT[row.status] || { label: row.status || 'Unknown', cls: 'bg-slate-100 text-slate-600' };
   const failed = row.status === 'failed';
   const reason = humanReason(row.reason);
   const title = ITEM_LABEL[row.item] || row.item || KIND_LABEL[row.kind] || row.kind;
