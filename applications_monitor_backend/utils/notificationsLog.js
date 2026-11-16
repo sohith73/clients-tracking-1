@@ -30,6 +30,13 @@ export const KINDS = ['daily_summary', 'inactivity_alert', 'onboarding', 'milest
 export const STATUS_VALUES = ['all', 'sent', 'failed', 'skipped', 'scheduled'];
 export const TRIGGERS = ['auto', 'manual'];
 
+import {
+  isClientMailOffDay,
+  nextClientMailInstant,
+  sameTimeNextClientMailDay,
+  CLIENT_MAIL_HOLD_REASON,
+} from './clientMailDays.js';
+
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -438,6 +445,10 @@ export function computeScheduled({ clients = [], configs = [], onboarding = [], 
       if (!at) continue;
       if (decided) at = new Date(at.getTime() + DAY_MS);
       const internal = key === 'inactivity_alert';
+      // No client mail on Sundays (IST): the worker skips the day and sends at
+      // the same time on Monday. The team's own alert is not client mail.
+      const heldFrom = !internal && isClientMailOffDay(at) ? at : null;
+      if (heldFrom) at = sameTimeNextClientMailDay(at);
       const to = internal
         ? 'team inbox'
         : String(cfg?.paymentEmailOverride || '').trim().toLowerCase() || String(client.paymentEmail || '').trim().toLowerCase();
@@ -452,9 +463,15 @@ export function computeScheduled({ clients = [], configs = [], onboarding = [], 
         at,
         status: 'scheduled',
         // Why it might not go out, so "scheduled" is never read as a promise.
-        reason: !to ? 'no_payment_email' : def.activityGated ? 'only_if_roles_added' : '',
+        reason: !to
+          ? 'no_payment_email'
+          : heldFrom
+            ? CLIENT_MAIL_HOLD_REASON
+            : def.activityGated
+              ? 'only_if_roles_added'
+              : '',
         trigger: 'auto',
-        dueNow: !decided && at.getTime() <= now.getTime(),
+        dueNow: !decided && !heldFrom && at.getTime() <= now.getTime(),
         added: null,
         applied: null,
       });
@@ -466,8 +483,14 @@ export function computeScheduled({ clients = [], configs = [], onboarding = [], 
     const email = String(doc.clientEmail || '').trim().toLowerCase();
     for (const step of Array.isArray(doc.steps) ? doc.steps : []) {
       if (!step || step.sentAt || (step.attempts || 0) >= ONBOARDING_MAX_ATTEMPTS) continue;
-      const at = step.sendAt ? new Date(step.sendAt) : null;
-      if (!at || Number.isNaN(at.getTime())) continue;
+      const due = step.sendAt ? new Date(step.sendAt) : null;
+      if (!due || Number.isNaN(due.getTime())) continue;
+      // Sunday (IST): the worker sends nothing, so a step due on Sunday, or
+      // overdue while it is Sunday, goes out from Monday 00:00 IST.
+      let at = due;
+      if (isClientMailOffDay(due)) at = nextClientMailInstant(due);
+      else if (due.getTime() <= now.getTime() && isClientMailOffDay(now)) at = nextClientMailInstant(now);
+      const held = at !== due;
       rows.push({
         id: `s:o:${email}:${step.key}`,
         kind: 'onboarding',
@@ -478,9 +501,9 @@ export function computeScheduled({ clients = [], configs = [], onboarding = [], 
         subject: step.subject || '',
         at,
         status: 'scheduled',
-        reason: step.error ? `retrying: ${step.error}` : '',
+        reason: held ? CLIENT_MAIL_HOLD_REASON : step.error ? `retrying: ${step.error}` : '',
         trigger: 'auto',
-        dueNow: at.getTime() <= now.getTime(),
+        dueNow: !held && at.getTime() <= now.getTime(),
         added: null,
         applied: null,
       });

@@ -124,6 +124,7 @@ import FormData from 'form-data';
 import cron from 'node-cron';
 import { ClientEmailLogModel } from './ClientEmailLogModel.js';
 import { sendMilestoneEmail } from './utils/clientMilestoneEmails.js';
+import { isClientMailOffDay, CLIENT_MAIL_HOLD_REASON, CLIENT_MAIL_HOLD_MESSAGE } from './utils/clientMailDays.js';
 import { getActiveGmailSender } from './utils/gmailSender.js';
 import { notifyMilestoneSweep } from './utils/discordMilestoneNotify.js';
 import {
@@ -5913,7 +5914,16 @@ app.post('/api/clients/email-export', verifyToken, verifyAdmin, async (req, res)
 });
 
 // Admin: dispatch catch-up milestone email for a single client (any active client, paused included).
-app.post('/api/clients/:email/send-pending-milestones', verifyToken, verifyAdmin, async (req, res) => {
+// No client mail on Sundays (IST): the admin send buttons answer 409 instead
+// of mailing a client. See utils/clientMailDays.js.
+function holdClientMailOnSunday(req, res, next) {
+  if (isClientMailOffDay()) {
+    return res.status(409).json({ error: CLIENT_MAIL_HOLD_MESSAGE, code: CLIENT_MAIL_HOLD_REASON });
+  }
+  return next();
+}
+
+app.post('/api/clients/:email/send-pending-milestones', verifyToken, verifyAdmin, holdClientMailOnSunday, async (req, res) => {
   try {
     const emailLower = String(req.params.email || '').toLowerCase().trim();
     if (!emailLower) return res.status(400).json({ error: 'email required' });
@@ -5992,7 +6002,7 @@ app.post('/api/clients/:email/send-pending-milestones', verifyToken, verifyAdmin
 // on a failed email row in the client ticket. Force-sends the given milestone
 // regardless of its current notified state, recomputing live counts so the
 // email reflects current progress. Body: { milestoneKey } (preferred) or { type }.
-app.post('/api/clients/:email/resend-milestone', verifyToken, verifyAdmin, async (req, res) => {
+app.post('/api/clients/:email/resend-milestone', verifyToken, verifyAdmin, holdClientMailOnSunday, async (req, res) => {
   try {
     const emailLower = String(req.params.email || '').toLowerCase().trim();
     const milestoneKey = String(req.body?.milestoneKey || '').trim();
@@ -6091,7 +6101,7 @@ const handleTestMilestoneEmail = async (req, res) => {
 app.get('/test', handleTestMilestoneEmail);
 app.post('/test', handleTestMilestoneEmail);
 
-app.post('/api/clients/email-export/send-previous', verifyToken, verifyAdmin, async (req, res) => {
+app.post('/api/clients/email-export/send-previous', verifyToken, verifyAdmin, holdClientMailOnSunday, async (req, res) => {
   try {
     const result = await runSendPreviousMilestones();
     res.json(result);
@@ -6104,7 +6114,7 @@ app.post('/api/clients/email-export/send-previous', verifyToken, verifyAdmin, as
 // Admin: trigger full milestone sweep on demand (same code path as the
 // hourly cron). Returns per-client / per-milestone decision details so
 // operators can diagnose why automation did or did not fire.
-app.post('/api/admin/run-milestone-cron', verifyToken, verifyAdmin, async (req, res) => {
+app.post('/api/admin/run-milestone-cron', verifyToken, verifyAdmin, holdClientMailOnSunday, async (req, res) => {
   try {
     const verbose = req.query.verbose === '1' || req.body?.verbose === true;
     const result = await runClientMilestoneCron({ trigger: 'admin-trigger', verbose });
@@ -10261,18 +10271,23 @@ async function runSendPreviousMilestones() {
       snapshot: { planCap, currentCount, threshold: highest.threshold }
     });
 
-    const setOps = {};
-    for (const m of reachedUnsent) {
-      setOps[`milestonesNotified.${m.key}.sent`] = true;
-      setOps[`milestonesNotified.${m.key}.at`] = new Date();
-      setOps[`milestonesNotified.${m.key}.count`] = currentCount;
-      if (m.type === 'completed') setOps[`milestonesNotified.${m.key}.cap`] = m.threshold;
+    // Only mark them sent when the email went out, same rule as the sweep
+    // and send-pending. A failed or held send stays unsent for the next run.
+    if (sendResult?.success) {
+      const setOps = {};
+      for (const m of reachedUnsent) {
+        setOps[`milestonesNotified.${m.key}.sent`] = true;
+        setOps[`milestonesNotified.${m.key}.at`] = new Date();
+        setOps[`milestonesNotified.${m.key}.count`] = currentCount;
+        if (m.type === 'completed') setOps[`milestonesNotified.${m.key}.cap`] = m.threshold;
+      }
+      await ClientModel.updateOne({ email: client.email }, { $set: setOps });
     }
-    await ClientModel.updateOne({ email: client.email }, { $set: setOps });
 
     await recordMilestoneInMoveHistory(client.email, highest.key, sendResult, client.paymentEmail, { currentCount, planCap, threshold: highest.threshold });
     for (const m of reachedUnsent) {
-      if (m.key === highest.key) continue;
+      // "Caught up" is only true when the highest one actually went out.
+      if (m.key === highest.key || !sendResult?.success) continue;
       await recordMilestoneInMoveHistory(client.email, m.key, { skipped: true, reason: 'caught_up_via_send_previous' }, client.paymentEmail, { currentCount, planCap, threshold: m.threshold });
     }
 
@@ -10324,6 +10339,12 @@ let _milestoneSweepRunning = false;
  * stored cap silently so first deploy does not double-send.
  */
 async function runClientMilestoneCron({ trigger = 'cron', verbose = false } = {}) {
+  // Sunday (IST): no client mail. Nothing is marked sent, so Monday's 21:00
+  // sweep (or a boot sweep after midnight) sends whatever came due.
+  if (isClientMailOffDay()) {
+    console.log(`[Client Milestones] sweep held (trigger=${trigger}): no client mail on Sundays`);
+    return { processed: 0, sent: 0, failed: 0, skipped: 0, errors: 0, details: [], skippedReason: CLIENT_MAIL_HOLD_REASON };
+  }
   if (_milestoneSweepRunning) {
     console.warn(`[Client Milestones] sweep skipped (trigger=${trigger}) — previous run still active`);
     return { processed: 0, sent: 0, failed: 0, skipped: 0, errors: 0, details: [], skippedReason: 'sweep_already_running' };

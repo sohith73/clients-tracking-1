@@ -152,8 +152,10 @@ test('scheduled: every active client gets the daily summary unless switched off 
   assert.equal(by['new@x.com'].at.toISOString(), ist('2026-11-14T21:30:00').toISOString());
   assert.equal(by['new@x.com'].to, 'pay-new@x.com');
   assert.equal(by['new@x.com'].reason, 'only_if_roles_added');
-  // Today already decided: tomorrow at the client's own time.
-  assert.equal(by['done@x.com'].at.toISOString(), ist('2026-11-15T20:00:00').toISOString());
+  // Today (Saturday) already decided: tomorrow is Sunday, when no client mail
+  // goes out, so Monday at the client's own time.
+  assert.equal(by['done@x.com'].at.toISOString(), ist('2026-11-16T20:00:00').toISOString());
+  assert.equal(by['done@x.com'].reason, 'sunday_hold');
   // A Mattermost-only row now goes by email, but there is no address to send to.
   assert.equal(by['mm@x.com'].reason, 'no_payment_email');
   assert.ok(rows.every((r) => r.status === 'scheduled' && r.trigger === 'auto'));
@@ -175,6 +177,45 @@ test('scheduled: onboarding steps waiting for their time, not sent or given up o
   assert.equal(rows[0].dueNow, true);
   assert.equal(rows[0].reason, 'retrying: smtp 421');
   assert.equal(rows[1].dueNow, false);
+});
+
+test('scheduled on a Sunday: client mail moves to Monday, the team alert does not', () => {
+  const now = ist('2026-11-15T22:00:00'); // Sunday, past 21:30
+  const cfgs = [{
+    clientEmail: 'sun@x.com',
+    items: [
+      { key: 'daily_summary', enabled: true, channels: { email: true }, sendAtIST: '21:30' },
+      { key: 'inactivity_alert', enabled: true, channels: { email: true }, sendAtIST: '11:00', lastPeriodKey: 'inactivity_alert:2026-11-15' },
+    ],
+  }];
+  const rows = computeScheduled({ clients: [{ email: 'sun@x.com', paymentEmail: 'p@x.com' }], configs: cfgs, now });
+  const by = Object.fromEntries(rows.map((r) => [r.kind, r]));
+  assert.equal(by.daily_summary.at.toISOString(), ist('2026-11-16T21:30:00').toISOString());
+  assert.equal(by.daily_summary.reason, 'sunday_hold');
+  assert.equal(by.daily_summary.dueNow, false, 'today is not left open on a Sunday');
+  assert.equal(by.inactivity_alert.at.toISOString(), ist('2026-11-16T11:00:00').toISOString());
+  assert.equal(by.inactivity_alert.reason, '');
+});
+
+test('scheduled on a Sunday: onboarding steps due or overdue wait for Monday 00:00 IST', () => {
+  const now = ist('2026-11-15T12:00:00');
+  const onboarding = [{
+    clientEmail: 'o@x.com', paymentEmail: 'pay-o@x.com', status: 'scheduled',
+    steps: [
+      { key: 'base_resume', sendAt: ist('2026-11-14T23:00:00') },
+      { key: 'cover_letter', sendAt: ist('2026-11-15T18:00:00') },
+      { key: 'linkedin', sendAt: ist('2026-11-16T09:00:00') },
+    ],
+  }];
+  const rows = computeScheduled({ onboarding, now });
+  const by = Object.fromEntries(rows.map((r) => [r.item, r]));
+  const monday = ist('2026-11-16T00:00:00').toISOString();
+  assert.equal(by.base_resume.at.toISOString(), monday, 'overdue from Saturday');
+  assert.equal(by.base_resume.dueNow, false);
+  assert.equal(by.cover_letter.at.toISOString(), monday, 'due on Sunday');
+  assert.equal(by.cover_letter.reason, 'sunday_hold');
+  assert.equal(by.linkedin.at.toISOString(), ist('2026-11-16T09:00:00').toISOString(), 'Monday is untouched');
+  assert.equal(by.linkedin.reason, '');
 });
 
 test('scheduled rows honour the date, kind, trigger and search filters', () => {
