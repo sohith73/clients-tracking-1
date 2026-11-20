@@ -1,6 +1,12 @@
 import { attendanceRouter } from './attendance/router.js';
 import express from 'express';
 import Stripe from 'stripe';
+import { registerDiscordRoutes } from './discordBot/discordRoutes.js';
+import { createDiscordApi } from './discordBot/discordApi.js';
+import { loadOnboardingConfig } from './discordBot/config.js';
+import { runOnboardingSweep } from './discordBot/onboardingSweep.js';
+import { createMongoDeps } from './discordBot/mongoDeps.js';
+import { DiscordOnboardingAlertModel } from './discordBot/DiscordOnboardingAlertModel.js';
 import compression from 'compression';
 import mongoose from 'mongoose';
 import { JobModel } from './JobModel.js';
@@ -626,6 +632,73 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
 
   res.json({ received: true });
 });
+
+// ── Discord onboarding bot (HTTP interactions, not a gateway bot) ──────────
+// Registered BEFORE express.json(): Discord signature checks need the raw body.
+// Everything is built lazily so missing env vars never crash boot.
+// Trigger is a GitHub Action (.github/workflows/discord-onboarding-cron.yml), no node-cron.
+{
+  let discordState = null;
+  const getDiscordState = () => {
+    if (discordState) return discordState;
+    const token = process.env.DISCORD_BOT_TOKEN;
+    if (!token) return null;
+    const config = loadOnboardingConfig(process.env);
+    const discord = createDiscordApi({ token, fetchImpl: fetch });
+    const sweepDeps = createMongoDeps({ discord });
+    // Discord users who may click the buttons without a portal account: the
+    // LinkedIn/cover letter people plus DISCORD_ALLOWED_CLICKER_IDS (comma
+    // separated user IDs, digits only). They are never tagged by this list.
+    const extraClickerIds = String(process.env.DISCORD_ALLOWED_CLICKER_IDS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => /^\d{5,25}$/.test(s));
+    const assigneeIds = new Set([...(config.linkedinCoverLetterUserIds || []), ...extraClickerIds]);
+    const csmRoles = ['admin', 'team_lead', 'csm'];
+    const interactionDeps = {
+      loadUser: async (userId) => {
+        if (!mongoose.Types.ObjectId.isValid(userId)) return null;
+        return mongoose.connection.db.collection('users').findOne(
+          { _id: new mongoose.Types.ObjectId(userId) },
+          { projection: { name: 1, email: 1, resumeLink: 1, coverLetters: 1, baseCoverLetter: 1 } }
+        );
+      },
+      loadOnboardingJob: async (email) =>
+        OnboardingJobModel.findOne({ clientEmail: String(email || '').toLowerCase() }).sort({ createdAt: -1 }).lean(),
+      canClick: async (discordUserId) => {
+        if (!discordUserId) return false;
+        if (assigneeIds.has(discordUserId)) return true;
+        const staff = await UserModel.findOne({
+          discordUserId,
+          isActive: true,
+          $or: [{ role: { $in: csmRoles } }, { roles: 'csm' }],
+        }).select('_id').lean();
+        return Boolean(staff);
+      },
+      markResolved: async ({ userId, need, discordUserId }) => {
+        await DiscordOnboardingAlertModel.updateMany(
+          { userId, need, status: { $in: ['sent', 'dry_run'] } },
+          { $set: { status: 'resolved', resolvedBy: discordUserId, resolvedAt: new Date() } }
+        );
+      },
+      now: () => new Date(),
+    };
+    discordState = { config, sweepDeps, interactionDeps };
+    return discordState;
+  };
+  registerDiscordRoutes(app, {
+    express,
+    getDeps: async () => getDiscordState()?.interactionDeps || null,
+    getConfig: () => getDiscordState()?.config || null,
+    getPublicKey: () => process.env.DISCORD_APP_PUBLIC_KEY || '',
+    runSweep: async () => {
+      const state = getDiscordState();
+      if (!state) throw Object.assign(new Error('discord bot not configured'), { notConfigured: true });
+      return runOnboardingSweep({ deps: state.sweepDeps, config: state.config, now: new Date() });
+    },
+    cronSecret: process.env.DISCORD_CRON_SECRET || '',
+  });
+}
 
 app.use(express.json());
 // Twilio webhooks send application/x-www-form-urlencoded by default
