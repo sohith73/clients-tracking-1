@@ -144,7 +144,10 @@ test("adding a holiday removes that day from pending and approved leaves, and ca
   await Settings.deleteMany({});
   const start = (() => {
     let d = addDays(dayKey(), 10);
-    while (new Date(`${d}T00:00:00Z`).getUTCDay() === 0) d = addDays(d, 1);
+    // Monday to Thursday only: then start+1, +5, +8 and +11 can never land on a
+    // Sunday (the weekly off day this test sets), whatever today's date is.
+    // Starting on Saturday used to put `next` on a Sunday and shift the count.
+    while (![1, 2, 3, 4].includes(new Date(`${d}T00:00:00Z`).getUTCDay())) d = addDays(d, 1);
     return d;
   })();
   const next = addDays(start, 1);

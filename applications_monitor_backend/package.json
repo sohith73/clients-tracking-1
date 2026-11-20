@@ -4,7 +4,7 @@
   "description": "Backend API for FlashFire Client Tracking Portal",
   "main": "index.js",
   "scripts": {
-    "test": "node --test \"tests/*.test.mjs\" \"utils/*.test.mjs\"",
+    "test": "node --test \"tests/*.test.mjs\" \"utils/*.test.mjs\" \"discordBot/*.test.mjs\"",
     "dev": "nodemon index.js",
     "start": "node index.js",
     "build": "echo \"Backend build completed\"",

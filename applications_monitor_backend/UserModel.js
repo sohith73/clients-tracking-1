@@ -27,6 +27,8 @@ export const UserSchema = new mongoose.Schema({
   // Personal Discord channel webhook — tag notifications + unresolved-comment
   // reminders are posted here when set.
   discordWebhookUrl: { type: String, trim: true, default: "" },
+  // Discord user id (snowflake). Lets the onboarding bot recognise CSM clicks. No index needed (tiny collection).
+  discordUserId: { type: String, trim: true, default: "" },
   linkedDashboardManagerName: { type: String, trim: true, default: "" },
   onboardingSubRole: {
     type: String,

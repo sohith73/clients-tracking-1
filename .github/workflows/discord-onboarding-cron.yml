@@ -1,0 +1,46 @@
+name: Discord Onboarding Cron
+
+# Daily Discord onboarding sweep. The inbound HTTPS request also wakes the
+# backend if the host suspended it. The sweep is idempotent per client, need and IST day.
+# Endpoint: POST /api/internal/run-discord-onboarding (needs x-cron-secret).
+# Add a repo secret named DISCORD_CRON_SECRET, matching the backend env var.
+
+on:
+  schedule:
+    # Daily at 8:00 AM IST. GitHub Actions cron is UTC; 08:00 IST = 02:30 UTC.
+    - cron: "30 2 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit Discord onboarding sweep endpoint
+        env:
+          BASE_URL: https://clients-tracking-backend-580t.onrender.com
+          CRON_SECRET: ${{ secrets.DISCORD_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "DISCORD_CRON_SECRET repo secret is empty"; exit 1
+          fi
+          URL="$BASE_URL/api/internal/run-discord-onboarding"
+          echo "Triggering: $URL"
+          # Retry up to 5 times, the first hit may just be waking a cold instance.
+          for attempt in 1 2 3 4 5; do
+            CODE=$(curl -sS -o resp.json -w "%{http_code}" -m 120 \
+              -X POST "$URL" \
+              -H "x-cron-secret: $CRON_SECRET") || CODE=000
+            echo "Attempt $attempt -> HTTP $CODE"
+            if [ "$CODE" = "200" ]; then
+              echo "Sweep summary:"; cat resp.json; echo
+              exit 0
+            fi
+            # 401, 409 and 503 will not fix themselves by retrying fast.
+            if [ "$CODE" = "401" ] || [ "$CODE" = "503" ]; then
+              echo "Not retrying (HTTP $CODE)"; cat resp.json || true; echo; exit 1
+            fi
+            echo "Not ready (HTTP $CODE), waiting 20s..."; sleep 20
+          done
+          echo "Sweep failed after retries. Last response:"; cat resp.json || true
+          exit 1
