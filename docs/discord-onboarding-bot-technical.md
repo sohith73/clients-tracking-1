@@ -10,27 +10,76 @@ There is no in-process node-cron job for this feature.
 Code lives in `applications_monitor_backend/discordBot/`.
 `discordRoutes.js` registers both routes before the global `express.json()`, because Discord signature checks need the raw body.
 `interactions.js` handles the button click.
-`onboardingSweep.js` finds new clients that still need a resume, LinkedIn work or a cover letter, and posts an alert with a button per need.
+`onboardingSweep.js` finds new clients that still need a resume, LinkedIn work or a cover letter, and starts the sequence below in the client's thread.
 Everything is built lazily on the first request, so missing env vars never break boot.
+
+## Sequential flow
+Everything happens inside the client's thread, strictly in this order.
+1. Resume stage: the 8 AM sweep posts "Resume not made for {client}" and tags the resume maker.
+2. The resume maker comes from the latest onboarding job (`resumeMakerEmail`, `resumeMakerName`), matched to a `tracking_portal_users` doc.
+3. The tag uses that doc's `discordUserId`, else a name match against guild members.
+4. If no resume maker resolves, the sweep tags the CSM, and if that fails too it prints `CSM not matched: {name}` as plain text.
+5. When the resume button is clicked and the database re-check confirms it, the handler edits the message to the resolved text and removes the button.
+6. In the same click the handler posts a new message in the thread tagging every LinkedIn/cover letter assignee (`DISCORD_PRANJAL_USER_IDS`).
+7. That message has one button per need the plan has: Executive gets "LinkedIn done" and "Cover letter done", Professional gets "LinkedIn done", other plans get none and skip to the final message.
+8. Each LinkedIn or cover letter click is re-checked against the database and removes only its own button.
+9. When no button is left on the message, the handler posts the final message tagging the CSM: "Please start the applications for {client}. ..." with no button.
+10. If the CSM id is unknown the final message tags nobody and says `CSM not matched: {name}`.
+11. If the resume is already linked at sweep time but LinkedIn or cover letter is pending, the sweep posts the step 6 message directly and no resume message.
+12. If everything is already done at sweep time the sweep posts nothing. The final message is only ever posted by a button click.
+13. The handler records the step 6 message as alert rows with status `sent` (`recordFollowUp`) so the next sweep does not repeat it for the same IST day while buttons are open.
+14. A failed follow-up post never turns a verified click into an error: the click stays resolved and one line is logged without secrets.
+
+## custom_id contract
+Button state is carried in the `custom_id`, so no extra database state is needed.
+
+| Format | Use |
+| --- | --- |
+| `onb:<need>:<userId 24 hex>:<csmId>` | Real flow. `<csmId>` is the CSM Discord user id (digits) or `0` when unknown. |
+| `onb:<need>:<userId 24 hex>` | Legacy buttons already posted. CSM is treated as unknown. |
+| `tst:<step>:<csmId>:<resumeMakerId>` | Test flow. Both ids are digits only. |
+
+`need` and `step` are one of `resume`, `linkedin`, `cover`.
+The parser is a strict regex, anything else is answered with "Not supported" before any database or auth call.
+The longest possible id is 64 characters, under Discord's limit of 100, and a test pins that.
 
 ## Request flow for a click
 1. Discord sends the click with `x-signature-ed25519` and `x-signature-timestamp`.
 2. The route rejects missing or invalid signatures with 401, and timestamps more than 5 minutes off.
-3. `custom_id` must match `onb:<resume|linkedin|cover>:<24 hex userId>`.
-4. The clicker must be a configured assignee or an active portal user with a stored `discordUserId` and role admin, team_lead or csm (or `csm` in `roles`).
+3. `custom_id` must match one of the formats above.
+4. The clicker must be a configured assignee, an id in `DISCORD_ALLOWED_CLICKER_IDS`, or an active portal user with a stored `discordUserId` and role admin, team_lead or csm (or `csm` in `roles`), or an `onboarding_team` user whose `onboardingSubRole` is `resume_maker`.
 5. The handler re-checks the database and never trusts the click.
-6. If the need is done, the alert is marked resolved and the message is edited in place with the button removed.
+6. If the need is done, the alert is marked resolved, the message is edited in place, and the next step of the sequence runs.
 7. If not, the clicker gets an ephemeral reply and the button stays.
-Mentions in client names are neutralised, and resolved messages use `allowed_mentions: { parse: [] }`.
+Mentions in client names are neutralised, every post lists only the ids it means to mention in `allowedUserIds`, and edits use `allowed_mentions: { parse: [] }`.
+Messages never contain resume URLs or credentials.
+
+## Test flow
+The test flow runs the same sequence for a fake client with no database access.
+Test clicks never call `loadUser`, `loadOnboardingJob`, `markResolved` or `recordFollowUp`.
+The database re-check is skipped, but the same clicker rule (`canClick`) applies.
+The test client is treated as Executive, so the resume click posts both buttons and the last click posts the final message tagging `<@csmId>`.
+The client name comes from the thread name (`TEST <client>`, sanitised), never from the message text.
+Every test message starts with `[TEST]`.
+
+Start it with the script, which needs `DISCORD_BOT_TOKEN`, `DISCORD_CLIENTS_CHANNEL_ID` and `DISCORD_GUILD_ID` in the environment:
+```
+node scripts/discord-test-flow.mjs --client "sohith" --resume-maker <discordId> --csm <discordId>
+node scripts/discord-test-flow.mjs --client "sohith" --resume-maker <discordId> --csm <discordId> --confirm
+```
+Without `--confirm` it only prints what it would do and makes no network call.
+With `--confirm` it creates a public thread `TEST <client>` and posts the first message with the button `tst:resume:<csmId>:<resumeMakerId>`.
+The backend must be running with the Discord interactions endpoint live so the clicks are answered.
 
 ## Data it reads and writes
 Reads:
 - `users` collection (by ObjectId): `name`, `email`, `resumeLink`, `coverLetters`, `baseCoverLetter`.
-- `OnboardingJob` (by `clientEmail`): `status`.
-- `tracking_portal_users`: `discordUserId`, `role`, `roles`, `isActive`.
+- `users` also supplies `planType`, which decides the LinkedIn and cover letter needs.
+- `OnboardingJob` (by `clientEmail`): `status`, `csmName`, `resumeMakerEmail`, `resumeMakerName`.
+- `tracking_portal_users`: `discordUserId`, `role`, `roles`, `isActive`, `onboardingSubRole`, and the resume maker docs (one extra `$in` query by lowercased email).
 
 Writes:
-- `discord_onboarding_alerts`: one row per user, need and IST day, with status `sent`, `dry_run`, `failed` or `resolved`, plus `resolvedBy` and `resolvedAt`.
+- `discord_onboarding_alerts`: one row per user, need and IST day, with status `sent`, `dry_run`, `failed` or `resolved` (the click handler also upserts `sent` rows for the LinkedIn and cover letter message), plus `resolvedBy` and `resolvedAt`.
 - `discord_client_threads` (owned by the sweep).
 - New field `discordUserId` on `tracking_portal_users`, filled by an admin. No index is needed for it at this size.
 

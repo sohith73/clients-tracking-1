@@ -109,24 +109,87 @@ test('rerun the same day posts nothing', async () => {
   assert.equal(r2.skippedAlreadyAlerted, 1);
 });
 
-test('Executive gets resume, linkedin and cover letter tagging all assignees', async () => {
+test('Executive with resume pending gets only the resume message (sequential)', async () => {
   const { deps, calls } = makeDeps([client('u1', { user: { planType: 'Executive' } })]);
   const r = await runOnboardingSweep({ deps, config: cfg(), now: NOW });
-  assert.equal(r.posted, 3);
-  assert.equal(calls.createThread.length, 1); // one thread reused for all three
-  const li = calls.post.find((p) => p.body.content.startsWith('LinkedIn'));
-  const cl = calls.post.find((p) => p.body.content.startsWith('Cover letter'));
-  for (const p of [li, cl]) {
-    assert.deepEqual(p.body.allowedUserIds, PRANJAL);
-    for (const id of PRANJAL) assert.ok(p.body.content.includes(`<@${id}>`));
-  }
+  assert.equal(r.posted, 1);
+  assert.equal(calls.post.length, 1);
+  assert.ok(calls.post[0].body.content.startsWith('Resume not made'));
 });
 
-test('Professional gets resume and linkedin but no cover letter', async () => {
+test('Professional with resume pending gets only the resume message', async () => {
   const { deps, calls } = makeDeps([client('u1', { user: { planType: 'Professional' } })]);
   await runOnboardingSweep({ deps, config: cfg(), now: NOW });
-  assert.equal(calls.post.length, 2);
-  assert.ok(!calls.post.some((p) => p.body.content.startsWith('Cover letter')));
+  assert.equal(calls.post.length, 1);
+  assert.ok(!calls.post.some((p) => /LinkedIn|Cover letter/.test(p.body.content)));
+});
+
+test('resume pending tags the resume maker, not the CSM', async () => {
+  const { deps, calls } = makeDeps([client('u1', {
+    job: { status: 'x', csmName: 'Sam Lee', resumeMakerName: 'Rita Rao' },
+  })], { members: [
+    { user: { id: '900900', username: 'sam', global_name: 'Sam Lee' } },
+    { user: { id: '777777', username: 'rita', global_name: 'Rita Rao' } },
+  ] });
+  await runOnboardingSweep({ deps, config: cfg(), now: NOW });
+  assert.deepEqual(calls.post[0].body.allowedUserIds, ['777777']);
+  assert.ok(calls.post[0].body.content.includes('<@777777>'));
+  assert.ok(calls.post[0].body.components[0].components[0].custom_id.endsWith(':900900'));
+});
+
+test('resume maker portal user discordUserId wins over a name match', async () => {
+  const { deps, calls } = makeDeps([{
+    ...client('u1', { job: { status: 'x', resumeMakerName: 'Rita Rao' } }),
+    resumeMakerPortalUser: { name: 'Rita Rao', discordUserId: '555555' },
+  }]);
+  await runOnboardingSweep({ deps, config: cfg(), now: NOW });
+  assert.deepEqual(calls.post[0].body.allowedUserIds, ['555555']);
+});
+
+test('resume maker unresolved falls back to the CSM', async () => {
+  const { deps, calls } = makeDeps([client('u1', { job: { status: 'x', csmName: 'Sam Lee', resumeMakerName: 'Nobody Known' } })]);
+  await runOnboardingSweep({ deps, config: cfg(), now: NOW });
+  assert.deepEqual(calls.post[0].body.allowedUserIds, ['900']);
+});
+
+test('resume linked and LinkedIn plus cover pending: one stage-2 message, no resume message', async () => {
+  const { deps, calls } = makeDeps([client('u1', { user: { planType: 'Executive', resumeLink: [{ link: 'https://r' }] }, csm: { name: 'Sam Lee', discordUserId: '900900' } })]);
+  const r = await runOnboardingSweep({ deps, config: cfg(), now: NOW });
+  assert.equal(r.posted, 1);
+  assert.equal(calls.post.length, 1);
+  const { body } = calls.post[0];
+  assert.ok(body.content.startsWith('LinkedIn and cover letter not done'));
+  assert.ok(!body.content.includes('Resume not made'));
+  assert.deepEqual(body.allowedUserIds, PRANJAL);
+  assert.deepEqual(body.components[0].components.map((b) => b.custom_id.split(':')[1]), ['linkedin', 'cover']);
+  assert.ok(body.components[0].components[0].custom_id.endsWith(':900900'));
+  assert.deepEqual(calls.mark.filter((m) => m.status === 'sent').map((m) => m.need).sort(), ['coverLetter', 'linkedin']);
+});
+
+test('stage-2 alert recorded by the click handler stops the sweep from repeating it', async () => {
+  const { deps, calls } = makeDeps([client('u1', { user: { planType: 'Professional', resumeLink: [{ link: 'https://r' }] } })]);
+  const base = deps.tryClaimAlert;
+  deps.tryClaimAlert = async (a) => (a.need === 'linkedin' ? false : base(a));
+  const r = await runOnboardingSweep({ deps, config: cfg(), now: NOW });
+  assert.equal(calls.post.length, 0);
+  assert.equal(r.skippedAlreadyAlerted, 1);
+});
+
+test('resume, LinkedIn and cover letter all done: nothing posted', async () => {
+  const { deps, calls } = makeDeps([client('u1', {
+    user: { planType: 'Executive', resumeLink: [{ link: 'https://r' }] }, job: { status: 'cover_letter_done' },
+  })]);
+  const r = await runOnboardingSweep({ deps, config: cfg(), now: NOW });
+  assert.equal(calls.post.length, 0);
+  assert.equal(r.posted, 0);
+});
+
+test('dry run with a stage-2 client plans per need and writes nothing', async () => {
+  const { deps, calls } = makeDeps([client('u1', { user: { planType: 'Executive', resumeLink: [{ link: 'https://r' }] } })]);
+  const r = await runOnboardingSweep({ deps, config: cfg({ dryRun: true }), now: NOW });
+  assert.equal(calls.post.length + calls.mark.length + calls.createThread.length, 0);
+  assert.deepEqual(r.plan.map((p) => p.need), ['linkedin', 'coverLetter']);
+  assert.deepEqual(r.plan[0].wouldTag, PRANJAL);
 });
 
 test('linkedin is not gated on resume and skipped when done', async () => {
