@@ -148,11 +148,21 @@ export function createDiscordApi({
       return request('GET', `/guilds/${enc(guildId)}/channels`);
     },
 
-    async createTextChannel(guildId, { name, topic } = {}) {
+    async createTextChannel(guildId, { name, topic, parentId } = {}) {
       assertId(guildId, 'guild id');
       const body = { name, type: 0 };
       if (topic) body.topic = truncate(topic, 1024);
+      if (parentId) {
+        assertId(parentId, 'category id');
+        body.parent_id = String(parentId);
+      }
       return request('POST', `/guilds/${enc(guildId)}/channels`, { body });
+    },
+
+    /** Channel category (type 4). Needs Manage Channels. */
+    async createCategory(guildId, { name } = {}) {
+      assertId(guildId, 'guild id');
+      return request('POST', `/guilds/${enc(guildId)}/channels`, { body: { name: truncate(String(name ?? ''), 100), type: 4 } });
     },
 
     async getChannel(channelId) {

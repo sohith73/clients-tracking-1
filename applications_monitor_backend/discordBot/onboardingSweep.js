@@ -4,15 +4,14 @@
  * deps contract:
  *   discord: {
  *     listGuildChannels(guildId) -> channel[]            // {id, name, type}
- *     createTextChannel(guildId, { name }) -> channel
- *     createThread(channelId, { name }) -> { id }
- *     getChannel(id) -> { id, thread_metadata?: { archived } }
- *     unarchiveThread(threadId)
+ *     createCategory(guildId, { name }) -> { id }
+ *     createTextChannel(guildId, { name, topic, parentId }) -> { id }
+ *     getChannel(id) -> { id }                            // 404 means the client channel was deleted
  *     postMessage(channelId, { content, components, allowedUserIds }) -> { id }
  *     listGuildMembers(guildId) -> member[]
  *   }
  *   listCandidateClients({ since, excludePlans }) -> [{ user, onboardingJob|null, csmPortalUser|null, resumeMakerPortalUser|null }]
- *   getThread(userId) -> { threadId, channelId } | null
+ *   getThread(userId) -> { threadId, channelId } | null   // threadId is the client's text channel id
  *   saveThread({ userId, clientEmail, threadId, channelId, guildId })
  *   tryClaimAlert({ userId, need, istDay }) -> boolean
  *       true only if THIS call created the unique row. A row with status
@@ -35,11 +34,11 @@ import { isLinkedInDone, isCoverLetterDone, isNewClient, isResumeLinked, planNee
 import {
   buildFollowUpMessage,
   buildResumeMessage,
-  buildThreadName,
   istDateLabel,
   istDayKey,
 } from './messages.js';
 import { resolveCsmDiscordId } from './csmMatch.js';
+import { buildChannelName, createClientChannel } from './channelPlacement.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -51,47 +50,50 @@ function is404(e) {
   return e?.status === 404 || e?.statusCode === 404 || e?.code === 404;
 }
 
-/** Find, else create, the #clients channel. Returns id or null (dry run, nothing to create). */
-async function resolveChannel({ discord, config, dryRun }) {
-  if (config.clientsChannelId) return config.clientsChannelId;
-  const channels = (await discord.listGuildChannels(config.guildId)) || [];
-  const found = channels.find(
-    (c) => (c.type === undefined || c.type === 0) && String(c.name).toLowerCase() === config.clientsChannelName
-  );
-  if (found) return found.id;
-  if (!config.allowCreateChannel) {
-    throw new Error(`Channel #${config.clientsChannelName} not found and channel creation is disabled`);
-  }
-  if (dryRun) return null;
-  const created = await discord.createTextChannel(config.guildId, { name: config.clientsChannelName });
-  return created.id;
-}
-
-/** Reuse the stored thread, unarchive it, or recreate it if Discord says it is gone. */
-async function ensureThread({ deps, config, channelId, user, onboardingJob }) {
-  const userId = String(user._id);
+/**
+ * One text channel per client. Reuse the stored one; if Discord says it is gone
+ * (404), make a new one. `ctx` holds the cached guild channel list and the
+ * number of channels created so far this run.
+ */
+async function ensureClientChannel({ deps, config, user, onboardingJob, userId, ctx }) {
   const stored = await deps.getThread(userId);
   if (stored?.threadId) {
     try {
-      const ch = await deps.discord.getChannel(stored.threadId);
-      if (ch?.thread_metadata?.archived) await deps.discord.unarchiveThread(stored.threadId);
+      await deps.discord.getChannel(stored.threadId);
       return stored.threadId;
     } catch (e) {
       if (!is404(e)) throw e;
-      // Thread was deleted in Discord: fall through and make a new one.
+      // Channel was deleted in Discord: fall through and make a new one.
     }
   }
-  const thread = await deps.discord.createThread(channelId, {
-    name: buildThreadName(user.name || user.email, onboardingJob?.clientNumber),
+  if (!ctx.channels) ctx.channels = (await deps.discord.listGuildChannels(config.guildId)) || [];
+  const made = await createClientChannel({
+    discord: deps.discord,
+    guildId: config.guildId,
+    channels: ctx.channels,
+    baseName: config.categoryName,
+    max: config.categoryMaxChannels,
+    name: clientChannelName({ user, onboardingJob, userId }),
+    topic: `Onboarding for ${String(user.name || 'client').slice(0, 80)}`,
   });
+  if (made.created) ctx.created++;
   await deps.saveThread({
     userId,
     clientEmail: user.email || '',
-    threadId: thread.id,
-    channelId,
+    threadId: made.id,
+    channelId: made.categoryId,
     guildId: config.guildId,
   });
-  return thread.id;
+  return made.id;
+}
+
+function clientChannelName({ user, onboardingJob, userId }) {
+  return buildChannelName({
+    clientNumber: onboardingJob?.clientNumber,
+    name: user.name,
+    email: user.email,
+    userId,
+  });
 }
 
 /**
@@ -105,7 +107,6 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
   const dateLabel = istDateLabel(now);
   const summary = {
     dryRun,
-    channelId: null,
     considered: 0,
     posted: 0,
     skippedLinked: 0,
@@ -156,7 +157,7 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
     }
   }
 
-  summary.channelId = await resolveChannel({ discord: deps.discord, config, dryRun });
+  const ctx = { channels: null, created: 0 };
 
   let used = 0; // messages posted (or planned in dry run), for the safety cap
   outer: for (const w of active) {
@@ -216,10 +217,16 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
 
       if (dryRun) {
         for (const need of todo) {
-          summary.plan.push({ userId, email: user.email || '', need, csmMatched, resumeMakerMatched, wouldTag: message.allowedUserIds });
+          summary.plan.push({ userId, email: user.email || '', need, channelName: clientChannelName({ user, onboardingJob: w.onboardingJob, userId }), csmMatched, resumeMakerMatched, wouldTag: message.allowedUserIds });
         }
         used++;
         continue;
+      }
+
+      // Stop before claiming anything when this client needs a new channel and the run's cap is used.
+      if (ctx.created >= config.maxNewChannelsPerRun && !(await deps.getThread(userId))?.threadId) {
+        summary.capped = true;
+        break outer;
       }
 
       // One alert row per need and day. Only post for the needs this run claimed.
@@ -243,7 +250,7 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
       }
       try {
         if (!threadId) {
-          threadId = await ensureThread({ deps, config, channelId: summary.channelId, user, onboardingJob: w.onboardingJob });
+          threadId = await ensureClientChannel({ deps, config, user, onboardingJob: w.onboardingJob, userId, ctx });
         }
         const sent = await deps.discord.postMessage(threadId, {
           content: message.content,

@@ -2,6 +2,7 @@
  * Pure helpers for scripts/discord-test-flow.mjs. No I/O, no env, no network.
  */
 import { DASHBOARD_URL, buildTestCustomId, istDateLabel, neutralizeMentions } from './messages.js';
+import { buildChannelName } from './channelPlacement.js';
 import { sanitizeName } from './interactions.js';
 
 const SNOWFLAKE_RE = /^\d{5,25}$/;
@@ -36,7 +37,7 @@ export function parseTestFlowArgs(argv) {
  * @param {{client: string, resumeMaker: string, csm: string}} args
  * @param {Record<string, string|undefined>} env
  * @param {{requireToken?: boolean}} [opts] the token is only needed when posting
- * @returns {{client: string, email: string, resumeMaker: string, csm: string, channelId: string, guildId: string}}
+ * @returns {{client: string, email: string, resumeMaker: string, csm: string, guildId: string}}
  * @throws {Error} with a message that names the problem and never contains a secret
  */
 export function validateTestFlowInput(args, env, { requireToken = true } = {}) {
@@ -50,23 +51,21 @@ export function validateTestFlowInput(args, env, { requireToken = true } = {}) {
   if (csmList.length === 0 || !csmList.every((x) => SNOWFLAKE_RE.test(x))) problems.push('--csm must be one or more Discord user ids (5 to 25 digits each), comma separated');
   const email = String(args.email ?? '').trim();
   if (email && !/^[^\s@()<>]+@[^\s@()<>]+\.[^\s@()<>]+$/.test(email)) problems.push('--email is not a valid email address');
-  const channelId = String(env.DISCORD_CLIENTS_CHANNEL_ID ?? '').trim();
   const guildId = String(env.DISCORD_GUILD_ID ?? '').trim();
-  if (!SNOWFLAKE_RE.test(channelId)) problems.push('env DISCORD_CLIENTS_CHANNEL_ID is missing or not an id');
   if (!SNOWFLAKE_RE.test(guildId)) problems.push('env DISCORD_GUILD_ID is missing or not an id');
   if (requireToken && !String(env.DISCORD_BOT_TOKEN ?? '').trim()) problems.push('env DISCORD_BOT_TOKEN is missing');
   if (problems.length) throw new Error(problems.join('; '));
-  return { client, email, resumeMaker: args.resumeMaker, csm: csmList.join(','), channelId, guildId };
+  return { client, email, resumeMaker: args.resumeMaker, csm: csmList.join(','), guildId };
 }
 
 /**
- * What the script posts: the thread name and the first message of the test flow.
+ * What the script posts: the channel name and the first message of the test flow.
  * @param {{client: string, resumeMaker: string, csm: string}} input validated input
  * @param {Date} now
  */
 export function buildTestFlowStart({ client, email, resumeMaker, csm }, now) {
   return {
-    threadName: `TEST ${client}`.slice(0, 100),
+    channelName: buildChannelName({ name: client, prefix: 'test' }),
     message: {
       content: `[TEST] Resume not made for **${client}**${email ? ` (${neutralizeMentions(email)})` : ''}. ${istDateLabel(now)}. <@${resumeMaker}>\nDashboard: <${DASHBOARD_URL}>`,
       components: [{

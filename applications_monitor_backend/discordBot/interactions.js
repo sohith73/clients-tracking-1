@@ -109,7 +109,7 @@ function extractEmail(content) {
 
 /** Test flow: fixed Executive plan, no database, same state machine. */
 async function handleTestClick({ interaction, deps, parsed, clickerId, customId }) {
-  const threadName = String(interaction.channel?.name ?? '').replace(/^TEST\s+/i, '');
+  const threadName = String(interaction.channel?.name ?? '').replace(/^test[-\s]+/i, '');
   const hasName = threadName.trim() !== '';
   const name = hasName ? sanitizeName(threadName) : 'the test client';
   const day = istDay(deps.now ? deps.now() : new Date());

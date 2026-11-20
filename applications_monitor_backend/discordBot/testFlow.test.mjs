@@ -21,7 +21,6 @@ test('rejects unknown flags and missing values', () => {
 
 test('validates ids, client and env without echoing the token', () => {
   const v = validateTestFlowInput(OK, ENV);
-  assert.equal(v.channelId, '111111111111');
   assert.throws(() => validateTestFlowInput({ ...OK, csm: 'abc' }, ENV), /--csm/);
   assert.throws(() => validateTestFlowInput({ ...OK, resumeMaker: '12' }, ENV), /--resume-maker/);
   assert.throws(() => validateTestFlowInput({ ...OK, client: '  ' }, ENV), /--client is required/);
@@ -43,7 +42,7 @@ test('client name is sanitised', () => {
 
 test('start message tags only the resume maker and carries the tst button', () => {
   const s = buildTestFlowStart(validateTestFlowInput(OK, ENV), new Date('2026-11-18T03:00:00Z'));
-  assert.equal(s.threadName, 'TEST sohith');
+  assert.equal(s.channelName, 'test-sohith');
   assert.equal(s.message.content, '[TEST] Resume not made for **sohith**. 18 Nov 2026. <@333333333333>\nDashboard: <https://portal.flashfirejobs.com/>');
   assert.deepEqual(s.message.allowedUserIds, ['333333333333']);
   const b = s.message.components[0].components[0];
@@ -52,7 +51,7 @@ test('start message tags only the resume maker and carries the tst button', () =
 });
 
 test('email and several CSMs: validated, shown in the first message, packed into the button', () => {
-  const env = { DISCORD_CLIENTS_CHANNEL_ID: '5555555', DISCORD_GUILD_ID: '6666666' };
+  const env = { DISCORD_GUILD_ID: '6666666' };
   const input = validateTestFlowInput(
     { client: 'sohith', email: 'sohith@x.com', resumeMaker: '3333333', csm: '4444444, 7777777' },
     env,

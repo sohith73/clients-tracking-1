@@ -9,7 +9,7 @@ const PRANJAL = ['111111111111111111', '222222222222222222'];
 function cfg(extra = {}) {
   return { ...loadOnboardingConfig({
     DISCORD_ONBOARDING_ENABLED: 'true', DISCORD_BOT_DRY_RUN: 'false', DISCORD_GUILD_ID: 'g1',
-    DISCORD_CLIENTS_CHANNEL_ID: 'ch1', DISCORD_PRANJAL_USER_IDS: PRANJAL.join(','),
+    DISCORD_PRANJAL_USER_IDS: PRANJAL.join(','),
   }), ...extra };
 }
 
@@ -22,14 +22,15 @@ function client(id, over = {}) {
 }
 
 function makeDeps(clients, opts = {}) {
-  const calls = { post: [], createThread: [], createChannel: [], unarchive: [], saveThread: [], mark: [] };
+  const calls = { post: [], createThread: [], createCategory: [], createChannel: [], unarchive: [], saveThread: [], mark: [] };
   const claimed = new Set();
   const threads = new Map(Object.entries(opts.threads || {}));
   const deps = {
     discord: {
       listGuildChannels: async () => opts.channels || [],
-      createTextChannel: async (g, { name }) => { calls.createChannel.push(name); return { id: 'newch' }; },
-      createThread: async (ch, body) => { calls.createThread.push({ ch, body }); return { id: `th${calls.createThread.length}` }; },
+      createCategory: async (g, { name }) => { calls.createCategory.push(name); return { id: `cat${calls.createCategory.length}` }; },
+      createTextChannel: async (g, body) => { calls.createChannel.push(body); return { id: `th${calls.createChannel.length}` }; },
+      createThread: async () => { throw new Error('threads are no longer used'); },
       getChannel: async (id) => {
         if (opts.missingThreads?.includes(id)) throw Object.assign(new Error('Unknown Channel'), { status: 404 });
         return { id, thread_metadata: { archived: Boolean(opts.archived?.includes(id)) } };
@@ -96,7 +97,10 @@ test('unlinked resume posts one message with button and CSM mention', async () =
   assert.ok(body.content.includes('<@900>'));
   assert.equal(body.components[0].components[0].label, 'Resume done');
   assert.deepEqual(body.allowedUserIds, ['900']);
-  assert.equal(calls.createThread[0].ch, 'ch1');
+  assert.deepEqual(calls.createCategory, ['clients']);
+  assert.equal(calls.createChannel[0].name, '5-client-u1');
+  assert.equal(calls.createChannel[0].parentId, 'cat1');
+  assert.equal(calls.saveThread[0].threadId, 'th1');
   assert.equal(calls.mark.at(-1).status, 'sent');
 });
 
@@ -232,19 +236,18 @@ test('a throwing getThread on one client is isolated', async () => {
   assert.equal(r.failed, 1);
 });
 
-test('archived thread is unarchived and reused', async () => {
-  const { deps, calls } = makeDeps([client('u1')], { threads: { u1: { threadId: 'old', channelId: 'ch1' } }, archived: ['old'] });
+test('stored client channel is reused, nothing is created', async () => {
+  const { deps, calls } = makeDeps([client('u1')], { threads: { u1: { threadId: 'old', channelId: 'cat9' } } });
   await runOnboardingSweep({ deps, config: cfg(), now: NOW });
-  assert.deepEqual(calls.unarchive, ['old']);
-  assert.equal(calls.createThread.length, 0);
+  assert.equal(calls.createChannel.length + calls.createCategory.length, 0);
   assert.equal(calls.post[0].ch, 'old');
 });
 
-test('missing thread (404) is recreated and saved', async () => {
-  const { deps, calls } = makeDeps([client('u1')], { threads: { u1: { threadId: 'gone', channelId: 'ch1' } }, missingThreads: ['gone'] });
+test('deleted client channel (404) is recreated and saved', async () => {
+  const { deps, calls } = makeDeps([client('u1')], { threads: { u1: { threadId: 'gone', channelId: 'cat9' } }, missingThreads: ['gone'] });
   const r = await runOnboardingSweep({ deps, config: cfg(), now: NOW });
   assert.equal(r.posted, 1);
-  assert.equal(calls.createThread.length, 1);
+  assert.equal(calls.createChannel.length, 1);
   assert.equal(calls.saveThread[0].threadId, 'th1');
   assert.equal(calls.post[0].ch, 'th1');
 });
@@ -256,16 +259,32 @@ test('maxMessagesPerRun caps posting', async () => {
   assert.equal(r.capped, true);
 });
 
-test('channel resolved by name, then created, then failure', async () => {
-  let h = makeDeps([client('u1')], { channels: [{ id: 'found', name: 'Clients', type: 0 }] });
-  let r = await runOnboardingSweep({ deps: h.deps, config: cfg({ clientsChannelId: '' }), now: NOW });
-  assert.equal(r.channelId, 'found');
-  h = makeDeps([client('u1')], { channels: [] });
-  r = await runOnboardingSweep({ deps: h.deps, config: cfg({ clientsChannelId: '' }), now: NOW });
-  assert.deepEqual(h.calls.createChannel, ['clients']);
-  assert.equal(r.channelId, 'newch');
-  h = makeDeps([client('u1')], { channels: [] });
-  await assert.rejects(runOnboardingSweep({ deps: h.deps, config: cfg({ clientsChannelId: '', allowCreateChannel: false }), now: NOW }), /not found/);
+test('clients fill the category, then roll over to clients-2 at the cap', async () => {
+  const h = makeDeps([client('u1'), client('u2'), client('u3')]);
+  const r = await runOnboardingSweep({ deps: h.deps, config: cfg({ categoryMaxChannels: 2 }), now: NOW });
+  assert.equal(r.posted, 3);
+  assert.deepEqual(h.calls.createCategory, ['clients', 'clients-2']);
+  assert.deepEqual(h.calls.createChannel.map((c) => c.parentId), ['cat1', 'cat1', 'cat2']);
+});
+
+test('an existing clients category with room is used, no category is created', async () => {
+  const channels = [{ id: 'catA', name: 'clients', type: 4, parent_id: null }];
+  const h = makeDeps([client('u1')], { channels });
+  await runOnboardingSweep({ deps: h.deps, config: cfg(), now: NOW });
+  assert.equal(h.calls.createCategory.length, 0);
+  assert.equal(h.calls.createChannel[0].parentId, 'catA');
+});
+
+test('new channels per run are capped, and the capped client is not claimed', async () => {
+  const h = makeDeps([client('u1'), client('u2'), client('u3')]);
+  const r = await runOnboardingSweep({ deps: h.deps, config: cfg({ maxNewChannelsPerRun: 2 }), now: NOW });
+  assert.equal(r.capped, true);
+  assert.equal(h.calls.createChannel.length, 2);
+  assert.equal(h.calls.post.length, 2);
+  // The next run finishes the rest; nothing was claimed for u3, so it posts then.
+  const again = await runOnboardingSweep({ deps: h.deps, config: cfg({ maxNewChannelsPerRun: 2 }), now: NOW });
+  assert.equal(again.posted, 1);
+  assert.equal(h.calls.createChannel.length, 3);
 });
 
 test('reminderMaxDays stops repeat reminders', async () => {

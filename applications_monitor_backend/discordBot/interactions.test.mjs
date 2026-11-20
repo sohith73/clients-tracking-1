@@ -257,7 +257,7 @@ test('forged or malformed custom_ids never reach the database', async () => {
 test('test flow: full chain with no database access', async () => {
   const boom = () => { throw new Error('test flow must not touch the database'); };
   const { deps, calls } = makeDeps({ loadUser: boom, loadOnboardingJob: boom, markResolved: boom, recordFollowUp: boom });
-  const channel = { name: 'TEST sohith' };
+  const channel = { name: 'test-sohith' };
   const tst = (step) => `tst:${step}:${CSM}:${MAKER}`;
 
   const r1 = await handleInteraction({ interaction: { ...click(tst('resume'), MAKER), channel_id: THREAD, channel }, deps });
@@ -330,12 +330,12 @@ test('test flow: several CSMs are all tagged, email and dashboard carry through'
   const { deps, calls } = makeDeps({});
   const stage1 = { content: '[TEST] Resume not made for **sohith** (sohith@x.com). 20 Nov 2026. <@222222222222>', components: [] };
   const id = (step) => `tst:${step}:${CSM},${CSM2}:${MAKER}`;
-  await handleInteraction({ interaction: { ...click(id('resume')), channel_id: THREAD, channel: { name: 'TEST sohith' }, message: stage1 }, deps });
+  await handleInteraction({ interaction: { ...click(id('resume')), channel_id: THREAD, channel: { name: 'test-sohith' }, message: stage1 }, deps });
   const stage2Post = calls.posts[0].body;
   assert.match(stage2Post.content, /\(sohith@x\.com\)/);
   assert.ok(stage2Post.content.includes('portal.flashfirejobs.com'));
   const stage2Msg = { content: stage2Post.content, components: [{ type: 1, components: [{ type: 2, custom_id: id('cover') }] }] };
-  await handleInteraction({ interaction: { ...click(id('cover')), channel_id: THREAD, channel: { name: 'TEST sohith' }, message: stage2Msg }, deps });
+  await handleInteraction({ interaction: { ...click(id('cover')), channel_id: THREAD, channel: { name: 'test-sohith' }, message: stage2Msg }, deps });
   const fin = calls.posts[1].body;
   assert.deepEqual(fin.allowedUserIds, [CSM, CSM2]);
   assert.ok(fin.content.includes(`<@${CSM}> <@${CSM2}>`));
