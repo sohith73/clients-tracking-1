@@ -11,7 +11,7 @@
  *     postMessage(channelId, { content, components, allowedUserIds }) -> { id }
  *     listGuildMembers(guildId) -> member[]
  *   }
- *   listCandidateClients({ since, excludePlans }) -> [{ user, onboardingJob|null, csmPortalUser|null }]
+ *   listCandidateClients({ since, excludePlans }) -> [{ user, onboardingJob|null, csmPortalUser|null, resumeMakerPortalUser|null }]
  *   getThread(userId) -> { threadId, channelId } | null
  *   saveThread({ userId, clientEmail, threadId, channelId, guildId })
  *   tryClaimAlert({ userId, need, istDay }) -> boolean
@@ -21,13 +21,19 @@
  *   markAlert({ userId, need, istDay, status, messageId, threadId, error })
  *   countAlertDays({ userId, need }) -> number
  *
+ * The flow is sequential per client. While the resume is pending the sweep
+ * posts only the resume message (tagging the resume maker, else the CSM). Once
+ * the resume is linked it posts the LinkedIn/cover letter message for what is
+ * still pending. The click handler posts that message right after a resume
+ * click and the final "start applications" message; the sweep never posts the
+ * final one.
+ *
  * Dry run never claims or marks anything and never calls a Discord write
  * method. It only collects `plan`.
  */
 import { isLinkedInDone, isCoverLetterDone, isNewClient, isResumeLinked, planNeeds } from './needs.js';
 import {
-  buildCoverLetterMessage,
-  buildLinkedInMessage,
+  buildFollowUpMessage,
   buildResumeMessage,
   buildThreadName,
   istDateLabel,
@@ -125,17 +131,22 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
   const work = candidates.map((c) => {
     const needs = planNeeds(c.user.planType);
     const pending = [];
-    if (isResumeLinked(c.user)) summary.skippedLinked++;
-    else pending.push('resume');
-    // Not gated on the resume: LinkedIn and cover letter run in parallel with it.
-    if (needs.linkedin && !isLinkedInDone(c.user, c.onboardingJob)) pending.push('linkedin');
-    if (needs.coverLetter && !isCoverLetterDone(c.user, c.onboardingJob)) pending.push('coverLetter');
+    if (isResumeLinked(c.user)) {
+      summary.skippedLinked++;
+      // Sequential: LinkedIn and cover letter only after the resume is linked.
+      if (needs.linkedin && !isLinkedInDone(c.user, c.onboardingJob)) pending.push('linkedin');
+      if (needs.coverLetter && !isCoverLetterDone(c.user, c.onboardingJob)) pending.push('coverLetter');
+    } else {
+      pending.push('resume');
+    }
     return { ...c, pending };
   });
   const active = work.filter((w) => w.pending.length > 0);
   if (active.length === 0) return summary;
 
-  const needsCsm = active.some((w) => w.pending.includes('resume') && !w.csmPortalUser?.discordUserId);
+  const needsCsm = active.some(
+    (w) => !w.csmPortalUser?.discordUserId || (w.pending.includes('resume') && !w.resumeMakerPortalUser?.discordUserId)
+  );
   let members = [];
   if (needsCsm) {
     try {
@@ -153,11 +164,13 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
     const userId = String(user._id);
     let threadId = null;
     try {
+      const csmName = w.onboardingJob?.csmName || w.csmPortalUser?.name || '';
+      const csm = resolveCsmDiscordId({ portalUser: w.csmPortalUser, members, fallbackName: csmName });
+      const csmMatched = Boolean(csm.userId);
+
+      // Drop needs that hit the reminder limit.
+      const todo = [];
       for (const need of w.pending) {
-        if (used >= config.maxMessagesPerRun) {
-          summary.capped = true;
-          break outer;
-        }
         if (config.reminderMaxDays > 0) {
           const days = await deps.countAlertDays({ userId, need });
           if (days >= config.reminderMaxDays) {
@@ -165,59 +178,87 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
             continue;
           }
         }
+        todo.push(need);
+      }
+      if (todo.length === 0) continue;
+      if (used >= config.maxMessagesPerRun) {
+        summary.capped = true;
+        break outer;
+      }
 
-        let message;
-        let csmMatched = false;
-        if (need === 'resume') {
-          const csmName = w.onboardingJob?.csmName || w.csmPortalUser?.name || '';
-          const csm = resolveCsmDiscordId({ portalUser: w.csmPortalUser, members, fallbackName: csmName });
-          csmMatched = Boolean(csm.userId);
-          message = buildResumeMessage({
-            clientName: user.name,
-            clientEmail: user.email,
-            userId,
-            csmDiscordId: csm.userId,
-            csmName,
-            dateLabel,
-          });
-        } else {
-          const build = need === 'linkedin' ? buildLinkedInMessage : buildCoverLetterMessage;
-          message = build({
-            clientName: user.name,
-            clientEmail: user.email,
-            planType: user.planType,
-            userId,
-            dateLabel,
-            assigneeUserIds: config.linkedinCoverLetterUserIds,
-          });
-        }
+      let message;
+      let resumeMakerMatched = false;
+      if (todo[0] === 'resume') {
+        const makerName = w.onboardingJob?.resumeMakerName || w.resumeMakerPortalUser?.name || '';
+        const maker = resolveCsmDiscordId({ portalUser: w.resumeMakerPortalUser, members, fallbackName: makerName });
+        resumeMakerMatched = Boolean(maker.userId);
+        message = buildResumeMessage({
+          clientName: user.name,
+          clientEmail: user.email,
+          userId,
+          csmDiscordId: csm.userId,
+          csmName,
+          resumeMakerDiscordId: maker.userId,
+          dateLabel,
+        });
+      } else {
+        message = buildFollowUpMessage({
+          needs: todo.map((n) => (n === 'coverLetter' ? 'cover' : n)),
+          clientName: user.name,
+          clientEmail: user.email,
+          planType: user.planType,
+          userId,
+          csmDiscordId: csm.userId,
+          dateLabel,
+          assigneeUserIds: config.linkedinCoverLetterUserIds,
+        });
+      }
 
-        if (dryRun) {
-          summary.plan.push({ userId, email: user.email || '', need, csmMatched, wouldTag: message.allowedUserIds });
-          used++;
-          continue;
+      if (dryRun) {
+        for (const need of todo) {
+          summary.plan.push({ userId, email: user.email || '', need, csmMatched, resumeMakerMatched, wouldTag: message.allowedUserIds });
         }
+        used++;
+        continue;
+      }
 
-        const claimed = await deps.tryClaimAlert({ userId, need, istDay });
-        if (!claimed) {
-          summary.skippedAlreadyAlerted++;
-          continue;
+      // One alert row per need and day. Only post for the needs this run claimed.
+      const claimedNeeds = [];
+      for (const need of todo) {
+        if (await deps.tryClaimAlert({ userId, need, istDay })) claimedNeeds.push(need);
+        else summary.skippedAlreadyAlerted++;
+      }
+      if (claimedNeeds.length === 0) continue;
+      if (claimedNeeds.length !== todo.length && todo[0] !== 'resume') {
+        message = buildFollowUpMessage({
+          needs: claimedNeeds.map((n) => (n === 'coverLetter' ? 'cover' : n)),
+          clientName: user.name,
+          clientEmail: user.email,
+          planType: user.planType,
+          userId,
+          csmDiscordId: csm.userId,
+          dateLabel,
+          assigneeUserIds: config.linkedinCoverLetterUserIds,
+        });
+      }
+      try {
+        if (!threadId) {
+          threadId = await ensureThread({ deps, config, channelId: summary.channelId, user, onboardingJob: w.onboardingJob });
         }
-        try {
-          if (!threadId) {
-            threadId = await ensureThread({ deps, config, channelId: summary.channelId, user, onboardingJob: w.onboardingJob });
-          }
-          const sent = await deps.discord.postMessage(threadId, {
-            content: message.content,
-            components: message.components,
-            allowedUserIds: message.allowedUserIds,
-          });
+        const sent = await deps.discord.postMessage(threadId, {
+          content: message.content,
+          components: message.components,
+          allowedUserIds: message.allowedUserIds,
+        });
+        for (const need of claimedNeeds) {
           await deps.markAlert({ userId, need, istDay, status: 'sent', messageId: sent?.id || '', threadId });
-          summary.posted++;
-          used++;
-        } catch (e) {
-          summary.failed++;
-          summary.errors.push({ userId, error: errMessage(e) });
+        }
+        summary.posted++;
+        used++;
+      } catch (e) {
+        summary.failed++;
+        summary.errors.push({ userId, error: errMessage(e) });
+        for (const need of claimedNeeds) {
           try {
             await deps.markAlert({ userId, need, istDay, status: 'failed', threadId: threadId || '', error: errMessage(e) });
           } catch (markErr) {

@@ -656,11 +656,13 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
     const assigneeIds = new Set([...(config.linkedinCoverLetterUserIds || []), ...extraClickerIds]);
     const csmRoles = ['admin', 'team_lead', 'csm'];
     const interactionDeps = {
+      discord,
+      config,
       loadUser: async (userId) => {
         if (!mongoose.Types.ObjectId.isValid(userId)) return null;
         return mongoose.connection.db.collection('users').findOne(
           { _id: new mongoose.Types.ObjectId(userId) },
-          { projection: { name: 1, email: 1, resumeLink: 1, coverLetters: 1, baseCoverLetter: 1 } }
+          { projection: { name: 1, email: 1, planType: 1, resumeLink: 1, coverLetters: 1, baseCoverLetter: 1 } }
         );
       },
       loadOnboardingJob: async (email) =>
@@ -671,7 +673,12 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
         const staff = await UserModel.findOne({
           discordUserId,
           isActive: true,
-          $or: [{ role: { $in: csmRoles } }, { roles: 'csm' }],
+          $or: [
+            { role: { $in: csmRoles } },
+            { roles: 'csm' },
+            // Resume makers click "Resume done and linked" for their own clients.
+            { role: 'onboarding_team', onboardingSubRole: 'resume_maker' },
+          ],
         }).select('_id').lean();
         return Boolean(staff);
       },
@@ -680,6 +687,17 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
           { userId, need, status: { $in: ['sent', 'dry_run'] } },
           { $set: { status: 'resolved', resolvedBy: discordUserId, resolvedAt: new Date() } }
         );
+      },
+      // Records the stage-2 message the click handler posted, so the next sweep
+      // does not repeat it for the same IST day while its buttons are open.
+      recordFollowUp: async ({ userId, needs, istDay, messageId, threadId }) => {
+        for (const need of needs) {
+          await DiscordOnboardingAlertModel.updateOne(
+            { userId, need, istDay },
+            { $set: { status: 'sent', messageId: messageId || '', threadId: threadId || '', error: '' } },
+            { upsert: true }
+          );
+        }
       },
       now: () => new Date(),
     };

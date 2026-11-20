@@ -48,7 +48,7 @@ export function createMongoDeps({ discord }) {
         .collection('onboardingjobs')
         .find(
           { clientEmail: { $in: emails } },
-          { projection: { clientEmail: 1, clientNumber: 1, status: 1, csmEmail: 1, csmName: 1, createdAt: 1 } }
+          { projection: { clientEmail: 1, clientNumber: 1, status: 1, csmEmail: 1, csmName: 1, resumeMakerEmail: 1, resumeMakerName: 1, createdAt: 1 } }
         )
         .toArray();
       // Most recent job per email.
@@ -71,9 +71,24 @@ export function createMongoDeps({ discord }) {
         : [];
       const csmByEmail = new Map(csms.map((c) => [lower(c.email), c]));
 
+      // One extra query for the resume makers (any portal role, matched by email).
+      const makerEmails = [...new Set([...jobByEmail.values()].map((j) => lower(j.resumeMakerEmail)).filter(Boolean))];
+      const makers = makerEmails.length
+        ? await db()
+            .collection('tracking_portal_users')
+            .find({ email: { $in: makerEmails } }, { projection: { email: 1, name: 1, discordUserId: 1 } })
+            .toArray()
+        : [];
+      const makerByEmail = new Map(makers.map((m) => [lower(m.email), m]));
+
       return users.map((user) => {
         const onboardingJob = jobByEmail.get(lower(user.email)) || null;
-        return { user, onboardingJob, csmPortalUser: csmByEmail.get(lower(onboardingJob?.csmEmail)) || null };
+        return {
+          user,
+          onboardingJob,
+          csmPortalUser: csmByEmail.get(lower(onboardingJob?.csmEmail)) || null,
+          resumeMakerPortalUser: makerByEmail.get(lower(onboardingJob?.resumeMakerEmail)) || null,
+        };
       });
     },
 
