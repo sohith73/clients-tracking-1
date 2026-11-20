@@ -55,13 +55,17 @@ export function buildThreadName(clientName, clientNumber) {
  * Stateless custom_id contract (Discord caps custom_id at 100 chars):
  *   onb:<need>:<userId 24 hex>:<csmId digits | 0>   real flow, 0 means CSM unknown
  *   onb:<need>:<userId 24 hex>                       legacy, CSM unknown
- *   tst:<step>:<csmId digits>:<resumeMakerId digits> test flow, never touches the database
+ *   tst:<step>:<csmId[,csmId...]>:<resumeMakerId digits> test flow, never touches the database
  * need and step are one of resume, linkedin, cover.
  */
 export const CUSTOM_ID_RE = /^onb:(resume|linkedin|cover):([a-f0-9]{24})(?::(0|\d{5,25}))?$/;
-export const TEST_CUSTOM_ID_RE = /^tst:(resume|linkedin|cover):(\d{5,25}):(\d{5,25})$/;
+export const TEST_CUSTOM_ID_RE = /^tst:(resume|linkedin|cover):(\d{5,25}(?:,\d{5,25})*):(\d{5,25})$/;
 
 const SNOWFLAKE_RE = /^\d{5,25}$/;
+
+/** Team dashboard linked from every message. Wrapped in <> so Discord shows no embed. */
+export const DASHBOARD_URL = 'https://portal.flashfirejobs.com/';
+const dashboardLine = () => `\nDashboard: <${DASHBOARD_URL}>`;
 
 /** @param {unknown} id @returns {string|null} the id when it is a plausible Discord snowflake */
 function snowflakeOrNull(id) {
@@ -97,7 +101,7 @@ export function parseCustomId(raw) {
   const m = CUSTOM_ID_RE.exec(id);
   if (m) return { family: 'onb', need: m[1], userId: m[2], csmDiscordId: m[3] && m[3] !== '0' ? m[3] : null };
   const t = TEST_CUSTOM_ID_RE.exec(id);
-  if (t) return { family: 'tst', need: t[1], csmDiscordId: t[2], resumeMakerId: t[3] };
+  if (t) return { family: 'tst', need: t[1], csmDiscordId: t[2], csmDiscordIds: t[2].split(','), resumeMakerId: t[3] };
   return null;
 }
 
@@ -129,8 +133,8 @@ export function buildResumeMessage({ clientName, clientEmail, userId, csmDiscord
     ? `<@${tagId}>`
     : `CSM not matched: ${neutralizeMentions(csmName || 'unassigned')}`;
   return {
-    content: `Resume not made for ${who(clientName, clientEmail)}. ${dateLabel}. ${tagPart}`,
-    components: [{ type: 1, components: [button('Resume done and linked', buildCustomId({ need: 'resume', userId, csmDiscordId: csmId }))] }],
+    content: `Resume not made for ${who(clientName, clientEmail)}. ${dateLabel}. ${tagPart}${dashboardLine()}`,
+    components: [{ type: 1, components: [button('Resume done', buildCustomId({ need: 'resume', userId, csmDiscordId: csmId }))] }],
     allowedUserIds: tagId ? [tagId] : [],
   };
 }
@@ -155,7 +159,7 @@ export function buildFollowUpMessage({ needs, clientName, clientEmail, planType,
   const idFor = customIdFor || ((n) => buildCustomId({ need: n, userId, csmDiscordId }));
   const prefix = testPrefix ? '[TEST] ' : '';
   return {
-    content: `${prefix}${what} for ${who(clientName, clientEmail)}${plan}. ${dateLabel}. ${mentions}`,
+    content: `${prefix}${what} for ${who(clientName, clientEmail)}${plan}. ${dateLabel}. ${mentions}${dashboardLine()}`,
     components: wanted.length ? [{ type: 1, components: wanted.map((n) => button(FOLLOW_UP_LABEL[n], idFor(n))) }] : [],
     allowedUserIds: ids,
   };
@@ -173,21 +177,23 @@ export function buildCoverLetterMessage(p) {
 
 /**
  * Stage 3. Tells the CSM everything the plan needs is done. No button.
- * @param {{clientName: string, planType?: string, needs: {linkedin: boolean, coverLetter: boolean},
- *   csmDiscordId?: string|null, csmName?: string, testPrefix?: boolean}} p
+ * csmDiscordIds (array) wins over csmDiscordId; the test flow tags every CSM it was given.
+ * @param {{clientName: string, clientEmail?: string, planType?: string, needs: {linkedin: boolean, coverLetter: boolean},
+ *   csmDiscordId?: string|null, csmDiscordIds?: string[], csmName?: string, testPrefix?: boolean}} p
  * @returns {{content: string, components: object[], allowedUserIds: string[]}}
  */
-export function buildFinalMessage({ clientName, planType, needs, csmDiscordId, csmName, testPrefix }) {
-  const csmId = snowflakeOrNull(csmDiscordId);
+export function buildFinalMessage({ clientName, clientEmail, planType, needs, csmDiscordId, csmDiscordIds, csmName, testPrefix }) {
+  const csmIds = [...new Set((csmDiscordIds?.length ? csmDiscordIds : [csmDiscordId]).map(snowflakeOrNull).filter(Boolean))];
   const items = needs?.linkedin && needs?.coverLetter
     ? 'Resume, LinkedIn and cover letter are done'
     : needs?.linkedin ? 'Resume and LinkedIn are done' : 'The resume is done';
   const plan = planType ? `the ${neutralizeMentions(planType)} plan` : 'the plan';
-  const csmPart = csmId ? `<@${csmId}>` : `CSM not matched: ${neutralizeMentions(csmName || 'unassigned')}`;
+  const csmPart = csmIds.length ? csmIds.map((id) => `<@${id}>`).join(' ') : `CSM not matched: ${neutralizeMentions(csmName || 'unassigned')}`;
   const prefix = testPrefix ? '[TEST] ' : '';
+  const email = clientEmail ? ` (${neutralizeMentions(clientEmail)})` : '';
   return {
-    content: `${prefix}Please start the applications for **${neutralizeMentions(clientName || 'this client')}**. ${items} as required by ${plan}. ${csmPart}`,
+    content: `${prefix}Please start the applications for **${neutralizeMentions(clientName || 'this client')}**${email}. ${items} as required by ${plan}. ${csmPart}${dashboardLine()}`,
     components: [],
-    allowedUserIds: csmId ? [csmId] : [],
+    allowedUserIds: csmIds,
   };
 }

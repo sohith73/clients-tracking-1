@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleInteraction } from './interactions.js';
 
+const DASH = '\nDashboard: <https://portal.flashfirejobs.com/>';
+
 const UID = 'a'.repeat(24);
 const click = (customId, clicker = '111111111111') => ({
   type: 3,
@@ -80,7 +82,7 @@ test('resume linked: type 7 update, components cleared, markResolved called', as
   assert.equal(r.type, 7);
   assert.deepEqual(r.data.components, []);
   assert.deepEqual(r.data.allowed_mentions, { parse: [] });
-  assert.match(r.data.content, /Resume done and linked for \*\*Asha\*\*\. Confirmed by <@222222222222> on 2026-11-18\./);
+  assert.match(r.data.content, /Resume done for \*\*Asha\*\*\. Confirmed by <@222222222222> on 2026-11-18\./);
   assert.deepEqual(calls.markResolved, [{ userId: UID, need: 'resume', discordUserId: '222222222222' }]);
 });
 
@@ -159,9 +161,9 @@ for (const plan of ['Prime', 'Free Trial', undefined]) {
     assert.equal(r.type, 7);
     assert.equal(calls.posts.length, 1);
     const { body } = calls.posts[0];
-    assert.ok(body.content.startsWith('Please start the applications for **Asha**.'));
+    assert.ok(body.content.startsWith('Please start the applications for **Asha**'));
     assert.ok(body.content.includes('The resume is done'));
-    assert.ok(body.content.endsWith(`<@${CSM}>`));
+    assert.ok(body.content.endsWith(`<@${CSM}>${DASH}`));
     assert.deepEqual(body.components, []);
     assert.deepEqual(body.allowedUserIds, [CSM]);
     assert.equal(calls.records.length, 0);
@@ -199,7 +201,7 @@ test('last button clicked: final message tags the CSM', async () => {
   assert.equal(calls.posts[0].ch, THREAD);
   assert.equal(
     calls.posts[0].body.content,
-    `Please start the applications for **Asha**. Resume, LinkedIn and cover letter are done as required by the Executive plan. <@${CSM}>`
+    `Please start the applications for **Asha** (asha@x.com). Resume, LinkedIn and cover letter are done as required by the Executive plan. <@${CSM}>${DASH}`
   );
   assert.deepEqual(calls.posts[0].body.allowedUserIds, [CSM]);
 });
@@ -211,7 +213,7 @@ test('final message with unknown CSM is plain text and tags nobody', async () =>
   const legacy = `onb:linkedin:${UID}`;
   await handleInteraction({ interaction: { ...click(legacy), channel_id: THREAD, message: stage2([legacy]) }, deps });
   const { body } = calls.posts[0];
-  assert.ok(body.content.endsWith('CSM not matched: Sam Lee'));
+  assert.ok(body.content.endsWith('CSM not matched: Sam Lee' + DASH));
   assert.ok(!body.content.includes('<@'));
   assert.deepEqual(body.allowedUserIds, []);
 });
@@ -261,7 +263,7 @@ test('test flow: full chain with no database access', async () => {
   const r1 = await handleInteraction({ interaction: { ...click(tst('resume'), MAKER), channel_id: THREAD, channel }, deps });
   assert.equal(r1.type, 7);
   assert.deepEqual(r1.data.components, []);
-  assert.match(r1.data.content, /^\[TEST\] Resume done and linked for \*\*sohith\*\*/);
+  assert.match(r1.data.content, /^\[TEST\] Resume done for \*\*sohith\*\*/);
   assert.equal(calls.posts.length, 1);
   const s2 = calls.posts[0].body;
   assert.equal(calls.posts[0].ch, THREAD);
@@ -282,7 +284,7 @@ test('test flow: full chain with no database access', async () => {
   const fin = calls.posts[1].body;
   assert.equal(
     fin.content,
-    `[TEST] Please start the applications for **sohith**. Resume, LinkedIn and cover letter are done as required by the Executive plan. <@${CSM}>`
+    `[TEST] Please start the applications for **sohith**. Resume, LinkedIn and cover letter are done as required by the Executive plan. <@${CSM}>${DASH}`
   );
   assert.deepEqual(fin.allowedUserIds, [CSM]);
   assert.deepEqual(fin.components, []);
@@ -321,4 +323,21 @@ test('client names with mentions are neutralised in follow-up posts too', async 
   const { deps, calls } = makeDeps({ loadUser: withPlan('Executive', { name: '@everyone <@999>' }) });
   await handleInteraction({ interaction: resumeClick(), deps });
   assert.doesNotMatch(calls.posts[0].body.content, /@everyone|<@999>/);
+});
+
+test('test flow: several CSMs are all tagged, email and dashboard carry through', async () => {
+  const CSM2 = '987654321098765432';
+  const { deps, calls } = makeDeps({});
+  const stage1 = { content: '[TEST] Resume not made for **sohith** (sohith@x.com). 20 Nov 2026. <@222222222222>', components: [] };
+  const id = (step) => `tst:${step}:${CSM},${CSM2}:${MAKER}`;
+  await handleInteraction({ interaction: { ...click(id('resume')), channel_id: THREAD, channel: { name: 'TEST sohith' }, message: stage1 }, deps });
+  const stage2Post = calls.posts[0].body;
+  assert.match(stage2Post.content, /\(sohith@x\.com\)/);
+  assert.ok(stage2Post.content.includes('portal.flashfirejobs.com'));
+  const stage2Msg = { content: stage2Post.content, components: [{ type: 1, components: [{ type: 2, custom_id: id('cover') }] }] };
+  await handleInteraction({ interaction: { ...click(id('cover')), channel_id: THREAD, channel: { name: 'TEST sohith' }, message: stage2Msg }, deps });
+  const fin = calls.posts[1].body;
+  assert.deepEqual(fin.allowedUserIds, [CSM, CSM2]);
+  assert.ok(fin.content.includes(`<@${CSM}> <@${CSM2}>`));
+  assert.ok(fin.content.includes('(sohith@x.com)'));
 });

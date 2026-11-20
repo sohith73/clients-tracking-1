@@ -5,6 +5,8 @@ import {
   buildCustomId, buildTestCustomId, parseCustomId, buildFollowUpMessage, buildFinalMessage,
 } from './messages.js';
 
+const DASH = '\nDashboard: <https://portal.flashfirejobs.com/>';
+
 const UID = '507f1f77bcf86cd799439011';
 
 test('date label crosses IST midnight correctly', () => {
@@ -18,21 +20,21 @@ test('date label crosses IST midnight correctly', () => {
 
 test('resume message with matched CSM', () => {
   const m = buildResumeMessage({ clientName: 'Jane Doe', clientEmail: 'jane@x.com', userId: UID, csmDiscordId: '123456789012345678', csmName: 'Sam', dateLabel: '18 Nov 2026' });
-  assert.equal(m.content, 'Resume not made for **Jane Doe** (jane@x.com). 18 Nov 2026. <@123456789012345678>');
+  assert.equal(m.content, 'Resume not made for **Jane Doe** (jane@x.com). 18 Nov 2026. <@123456789012345678>' + DASH);
   assert.deepEqual(m.allowedUserIds, ['123456789012345678']);
   assert.equal(m.components.length, 1);
   const btn = m.components[0].components[0];
   assert.equal(m.components[0].type, 1);
   assert.equal(btn.type, 2);
   assert.equal(btn.style, 1);
-  assert.equal(btn.label, 'Resume done and linked');
+  assert.equal(btn.label, 'Resume done');
   assert.equal(btn.custom_id, `onb:resume:${UID}:123456789012345678`);
   assert.ok(btn.custom_id.length < 100);
 });
 
 test('resume message fallback when CSM unmatched', () => {
   const m = buildResumeMessage({ clientName: 'A', clientEmail: 'a@x.com', userId: UID, csmDiscordId: null, csmName: 'Sam Lee', dateLabel: 'd' });
-  assert.ok(m.content.endsWith('CSM not matched: Sam Lee'));
+  assert.ok(m.content.endsWith('CSM not matched: Sam Lee' + DASH));
   assert.deepEqual(m.allowedUserIds, []);
   const n = buildResumeMessage({ clientName: 'A', clientEmail: '', userId: UID, dateLabel: 'd' });
   assert.ok(n.content.includes('CSM not matched: unassigned'));
@@ -82,7 +84,8 @@ test('custom_id: csm embedded, unknown csm is 0, legacy 3-part still parses', ()
   assert.deepEqual(parseCustomId(`onb:linkedin:${UID}:${CSM}`), { family: 'onb', need: 'linkedin', userId: UID, csmDiscordId: CSM });
   assert.deepEqual(parseCustomId(`onb:linkedin:${UID}:0`), { family: 'onb', need: 'linkedin', userId: UID, csmDiscordId: null });
   assert.deepEqual(parseCustomId(`onb:resume:${UID}`), { family: 'onb', need: 'resume', userId: UID, csmDiscordId: null });
-  assert.deepEqual(parseCustomId(`tst:cover:${CSM}:${MAKER}`), { family: 'tst', need: 'cover', csmDiscordId: CSM, resumeMakerId: MAKER });
+  assert.deepEqual(parseCustomId(`tst:cover:${CSM}:${MAKER}`), { family: 'tst', need: 'cover', csmDiscordId: CSM, csmDiscordIds: [CSM], resumeMakerId: MAKER });
+  assert.deepEqual(parseCustomId(`tst:cover:${CSM},${MAKER}:${MAKER}`).csmDiscordIds, [CSM, MAKER]);
 });
 
 test('custom_id: strict parser rejects junk', () => {
@@ -106,13 +109,13 @@ test('custom_id: worst case stays under 100 chars', () => {
 test('resume message tags the resume maker first, then the CSM, then plain text', () => {
   const base = { clientName: 'A', userId: UID, dateLabel: 'd', csmName: 'Sam' };
   const maker = buildResumeMessage({ ...base, csmDiscordId: CSM, resumeMakerDiscordId: MAKER });
-  assert.ok(maker.content.endsWith(`<@${MAKER}>`));
+  assert.ok(maker.content.endsWith(`<@${MAKER}>${DASH}`));
   assert.deepEqual(maker.allowedUserIds, [MAKER]);
   assert.equal(maker.components[0].components[0].custom_id, `onb:resume:${UID}:${CSM}`);
   const csm = buildResumeMessage({ ...base, csmDiscordId: CSM });
-  assert.ok(csm.content.endsWith(`<@${CSM}>`));
+  assert.ok(csm.content.endsWith(`<@${CSM}>${DASH}`));
   const none = buildResumeMessage(base);
-  assert.ok(none.content.endsWith('CSM not matched: Sam'));
+  assert.ok(none.content.endsWith('CSM not matched: Sam' + DASH));
   assert.deepEqual(none.allowedUserIds, []);
 });
 
@@ -128,14 +131,14 @@ test('follow-up message: buttons per need, all assignees tagged', () => {
 
 test('final message: wording per plan, CSM tag or plain text, no button, no mention leaks', () => {
   const full = buildFinalMessage({ clientName: 'J', planType: 'Executive', needs: { linkedin: true, coverLetter: true }, csmDiscordId: CSM });
-  assert.equal(full.content, `Please start the applications for **J**. Resume, LinkedIn and cover letter are done as required by the Executive plan. <@${CSM}>`);
+  assert.equal(full.content, `Please start the applications for **J**. Resume, LinkedIn and cover letter are done as required by the Executive plan. <@${CSM}>${DASH}`);
   assert.deepEqual(full.components, []);
   assert.deepEqual(full.allowedUserIds, [CSM]);
   const pro = buildFinalMessage({ clientName: 'J', planType: 'Professional', needs: { linkedin: true, coverLetter: false }, csmDiscordId: CSM });
   assert.ok(pro.content.includes('Resume and LinkedIn are done as required by the Professional plan.'));
   const prime = buildFinalMessage({ clientName: 'J', planType: 'Prime', needs: { linkedin: false, coverLetter: false }, csmDiscordId: null, csmName: 'Sam Lee' });
   assert.ok(prime.content.includes('The resume is done as required by the Prime plan.'));
-  assert.ok(prime.content.endsWith('CSM not matched: Sam Lee'));
+  assert.ok(prime.content.endsWith('CSM not matched: Sam Lee' + DASH));
   assert.deepEqual(prime.allowedUserIds, []);
   const evil = buildFinalMessage({ clientName: '@everyone <@999>', planType: 'Prime', needs: {}, csmDiscordId: CSM });
   assert.ok(!/@everyone|<@999>/.test(evil.content));

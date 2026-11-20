@@ -94,7 +94,7 @@ test('unlinked resume posts one message with button and CSM mention', async () =
   assert.ok(body.content.includes('Resume not made for **Client u1**'));
   assert.ok(body.content.includes('18 Nov 2026'));
   assert.ok(body.content.includes('<@900>'));
-  assert.equal(body.components[0].components[0].label, 'Resume done and linked');
+  assert.equal(body.components[0].components[0].label, 'Resume done');
   assert.deepEqual(body.allowedUserIds, ['900']);
   assert.equal(calls.createThread[0].ch, 'ch1');
   assert.equal(calls.mark.at(-1).status, 'sent');

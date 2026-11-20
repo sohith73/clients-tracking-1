@@ -8,7 +8,7 @@ const OK = { client: 'sohith', resumeMaker: '333333333333', csm: '444444444444' 
 test('parses flags and confirm', () => {
   assert.deepEqual(
     parseTestFlowArgs(['--client', 'sohith', '--resume-maker', '3333333', '--csm', '4444444', '--confirm']),
-    { client: 'sohith', resumeMaker: '3333333', csm: '4444444', confirm: true }
+    { client: 'sohith', email: '', resumeMaker: '3333333', csm: '4444444', confirm: true }
   );
   assert.equal(parseTestFlowArgs([]).confirm, false);
 });
@@ -44,9 +44,25 @@ test('client name is sanitised', () => {
 test('start message tags only the resume maker and carries the tst button', () => {
   const s = buildTestFlowStart(validateTestFlowInput(OK, ENV), new Date('2026-11-18T03:00:00Z'));
   assert.equal(s.threadName, 'TEST sohith');
-  assert.equal(s.message.content, '[TEST] Resume not made for **sohith**. 18 Nov 2026. <@333333333333>');
+  assert.equal(s.message.content, '[TEST] Resume not made for **sohith**. 18 Nov 2026. <@333333333333>\nDashboard: <https://portal.flashfirejobs.com/>');
   assert.deepEqual(s.message.allowedUserIds, ['333333333333']);
   const b = s.message.components[0].components[0];
-  assert.equal(b.label, 'Resume done and linked');
+  assert.equal(b.label, 'Resume done');
   assert.equal(b.custom_id, 'tst:resume:444444444444:333333333333');
+});
+
+test('email and several CSMs: validated, shown in the first message, packed into the button', () => {
+  const env = { DISCORD_CLIENTS_CHANNEL_ID: '5555555', DISCORD_GUILD_ID: '6666666' };
+  const input = validateTestFlowInput(
+    { client: 'sohith', email: 'sohith@x.com', resumeMaker: '3333333', csm: '4444444, 7777777' },
+    env,
+    { requireToken: false }
+  );
+  assert.equal(input.csm, '4444444,7777777');
+  const start = buildTestFlowStart(input, new Date('2026-11-20T04:00:00Z'));
+  assert.ok(start.message.content.includes('(sohith@x.com)'));
+  assert.ok(start.message.content.includes('<https://portal.flashfirejobs.com/>'));
+  assert.equal(start.message.components[0].components[0].custom_id, 'tst:resume:4444444,7777777:3333333');
+  assert.throws(() => validateTestFlowInput({ client: 'a', email: 'not-an-email', resumeMaker: '3333333', csm: '4444444' }, env, { requireToken: false }), /--email/);
+  assert.throws(() => validateTestFlowInput({ client: 'a', resumeMaker: '3333333', csm: '4444444,abc' }, env, { requireToken: false }), /--csm/);
 });
