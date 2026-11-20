@@ -16,6 +16,7 @@
 //   SMTP_FROM_NAME  = display name in the From header (e.g. "FlashFire Team")
 
 import nodemailer from "nodemailer";
+import { isMailFallbackEnabled, isSmtpAuthError, sendViaSendgridFallback } from "./mailFallback.js";
 
 export function isSmtpConfigured() {
   return Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
@@ -54,7 +55,45 @@ function getTransporter() {
  * @param {Object} [a.headers]    - extra headers, e.g. List-Unsubscribe
  * @returns {Promise<{ messageId: string }>}
  */
-export async function sendViaSmtp({ to, subject, html, text, attachment, headers }) {
+// After Gmail refuses the login, sends go straight to SendGrid for this long,
+// then SMTP is tried again so a fixed app password is picked up on its own.
+const SMTP_AUTH_COOLDOWN_MS = 15 * 60 * 1000;
+let smtpAuthDeadUntil = 0;
+
+export function __setTransporter(t) {
+  _transporter = t;
+}
+export function __resetSmtpAuthState() {
+  smtpAuthDeadUntil = 0;
+}
+
+/**
+ * Send one email: Gmail SMTP first, SendGrid when Gmail fails (utils/mailFallback.js).
+ * Throws when every road failed, as before, so callers log the failure.
+ * @returns {Promise<{ messageId: string, channel: "smtp" | "sendgrid", smtpError?: string }>}
+ */
+export async function sendViaSmtp(args) {
+  let smtpError = "";
+  if (!isSmtpConfigured()) smtpError = "smtp_not_configured";
+  else if (smtpAuthDeadUntil > Date.now() && isMailFallbackEnabled()) smtpError = "smtp_login_recently_refused";
+  else {
+    try {
+      const out = await sendViaGmailSmtp(args);
+      return { ...out, channel: "smtp" };
+    } catch (err) {
+      smtpError = String(err?.message || err).slice(0, 400);
+      if (isSmtpAuthError(smtpError)) smtpAuthDeadUntil = Date.now() + SMTP_AUTH_COOLDOWN_MS;
+      if (!isMailFallbackEnabled()) throw err;
+      console.warn(`[smtpSender] SMTP failed (${smtpError.slice(0, 120)}), sending "${String(args?.subject || "").slice(0, 60)}" through SendGrid`);
+    }
+  }
+  if (!isMailFallbackEnabled()) throw new Error(smtpError);
+  const res = await sendViaSendgridFallback(args);
+  if (!res.ok) throw new Error(`smtp: ${smtpError.slice(0, 200)} | ${res.error}`);
+  return { messageId: res.messageId, channel: "sendgrid", from: res.from, smtpError };
+}
+
+async function sendViaGmailSmtp({ to, subject, html, text, attachment, headers }) {
   const fromEmail = smtpFromEmail();
   const fromName = process.env.SMTP_FROM_NAME || "";
   const from = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
