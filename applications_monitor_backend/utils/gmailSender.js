@@ -178,10 +178,12 @@ export async function sendGmailEmail({
 
   try {
     let provider = logBase.provider;
+    let sentFrom = fromEmail;
     if (useSmtp) {
       // Falls back to SendGrid when Gmail refuses the send (utils/mailFallback.js).
       const sent = await sendViaSmtp({ to: recipient, subject, html, text, attachment, headers });
       provider = sent?.channel || "smtp";
+      if (sent?.from) sentFrom = sent.from;
       // The mail went out, but Gmail's login is broken: still raise the alarm,
       // or nobody fixes the app password while SendGrid quietly carries it.
       if (sent?.smtpError && isGmailAuthError(sent.smtpError)) {
@@ -191,8 +193,8 @@ export async function sendGmailEmail({
     } else {
       await sendViaGmailRaw(sender, { to: recipient, subject, html, text, attachment, headers });
     }
-    await ClientEmailLogModel.create({ ...logBase, provider, status: "success" });
-    console.log(`[GmailSender] sent ${category}/${type} to ${recipient} from ${fromEmail} via ${provider === "gmail" ? "oauth" : provider}`);
+    await ClientEmailLogModel.create({ ...logBase, provider, fromEmail: sentFrom, status: "success" });
+    console.log(`[GmailSender] sent ${category}/${type} to ${recipient} from ${sentFrom} via ${provider === "gmail" ? "oauth" : provider}`);
     return { success: true };
   } catch (err) {
     const msg = err?.response?.data?.error?.message || err?.message || "send_failed";

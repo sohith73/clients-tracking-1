@@ -29,6 +29,7 @@ test('Gmail 535 falls back to SendGrid and skips Gmail while the login is known 
     const b = await smtp.sendViaSmtp({ to: 'c@example.com', subject: 'Milestone 2', text: 'x' });
     assert.equal(a.channel, 'sendgrid');
     assert.equal(a.messageId, 'sendgrid:id1');
+    assert.equal(a.from, 'noreply@flashfirehq.com');
     assert.match(a.smtpError, /535/);
     assert.equal(b.channel, 'sendgrid');
     assert.equal(gmail, 1);

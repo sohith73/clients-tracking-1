@@ -90,7 +90,7 @@ export async function sendViaSmtp(args) {
   if (!isMailFallbackEnabled()) throw new Error(smtpError);
   const res = await sendViaSendgridFallback(args);
   if (!res.ok) throw new Error(`smtp: ${smtpError.slice(0, 200)} | ${res.error}`);
-  return { messageId: res.messageId, channel: "sendgrid", smtpError };
+  return { messageId: res.messageId, channel: "sendgrid", from: res.from, smtpError };
 }
 
 async function sendViaGmailSmtp({ to, subject, html, text, attachment, headers }) {
