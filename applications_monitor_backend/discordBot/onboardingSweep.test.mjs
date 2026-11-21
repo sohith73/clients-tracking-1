@@ -97,7 +97,7 @@ test('unlinked resume posts one message with button and CSM mention', async () =
   assert.ok(body.content.includes('<@900>'));
   assert.equal(body.components[0].components[0].label, 'Resume done');
   assert.deepEqual(body.allowedUserIds, ['900']);
-  assert.deepEqual(calls.createCategory, ['clients']);
+  assert.deepEqual(calls.createCategory, ['client-onboarding']);
   assert.equal(calls.createChannel[0].name, '5-client-u1');
   assert.equal(calls.createChannel[0].parentId, 'cat1');
   assert.equal(calls.saveThread[0].threadId, 'th1');
@@ -263,12 +263,12 @@ test('clients fill the category, then roll over to clients-2 at the cap', async 
   const h = makeDeps([client('u1'), client('u2'), client('u3')]);
   const r = await runOnboardingSweep({ deps: h.deps, config: cfg({ categoryMaxChannels: 2 }), now: NOW });
   assert.equal(r.posted, 3);
-  assert.deepEqual(h.calls.createCategory, ['clients', 'clients-2']);
+  assert.deepEqual(h.calls.createCategory, ['client-onboarding', 'client-onboarding-2']);
   assert.deepEqual(h.calls.createChannel.map((c) => c.parentId), ['cat1', 'cat1', 'cat2']);
 });
 
 test('an existing clients category with room is used, no category is created', async () => {
-  const channels = [{ id: 'catA', name: 'clients', type: 4, parent_id: null }];
+  const channels = [{ id: 'catA', name: 'client-onboarding', type: 4, parent_id: null }];
   const h = makeDeps([client('u1')], { channels });
   await runOnboardingSweep({ deps: h.deps, config: cfg(), now: NOW });
   assert.equal(h.calls.createCategory.length, 0);

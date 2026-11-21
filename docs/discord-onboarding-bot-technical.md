@@ -15,11 +15,11 @@ Everything is built lazily on the first request, so missing env vars never break
 
 ## Sequential flow
 Every client gets their own text channel, named `<clientNumber>-<name>` (for example `5788-sohith`, or `<name>-<last 4 of id>` when the client has no number yet).
-Channels live in categories named `clients`, `clients-2`, `clients-3` and so on.
-Discord allows at most 50 channels in one category, so the bot fills `clients`, and when it is full it creates `clients-2` and continues there.
-`DISCORD_CATEGORY_MAX_CHANNELS` can lower the cap but never raise it above 50.
+Channels live in categories named `client-onboarding`, `client-onboarding-2`, `client-onboarding-3` and so on.
+Discord allows at most 50 channels in one category, so the bot fills `client-onboarding`, and when it is full it creates `client-onboarding-2` and continues there.
+The category name, the 50 cap and the 25 new channels per run are constants in `discordBot/config.js`, not env vars.
 The bot needs the Manage Channels permission to make categories and channels.
-At most `DISCORD_MAX_NEW_CHANNELS_PER_RUN` channels (default 25) are created per run, and the 8:30 run continues the rest.
+At most 25 channels are created per run, and the 8:30 run continues the rest.
 Everything happens inside that channel, strictly in this order.
 1. Resume stage: the 8 AM sweep posts "Resume not made for {client}" and tags the resume maker.
 2. The resume maker comes from the latest onboarding job (`resumeMakerEmail`, `resumeMakerName`), matched to a `tracking_portal_users` doc.
@@ -74,7 +74,7 @@ node scripts/discord-test-flow.mjs --client "sohith" --resume-maker <discordId> 
 node scripts/discord-test-flow.mjs --client "sohith" --resume-maker <discordId> --csm <discordId> --confirm
 ```
 Without `--confirm` it only prints what it would do and makes no network call.
-With `--confirm` it creates a text channel `test-<client>` in the clients category and posts the first message with the button `tst:resume:<csmIds>:<resumeMakerId>`.
+With `--confirm` it creates a text channel `test-<client>` in the `client-onboarding` category and posts the first message with the button `tst:resume:<csmIds>:<resumeMakerId>`.
 The backend must be running with the Discord interactions endpoint live so the clicks are answered.
 
 ## Data it reads and writes
@@ -96,9 +96,6 @@ Writes:
 | `DISCORD_APP_PUBLIC_KEY` | Verifies interaction signatures. |
 | `DISCORD_APPLICATION_ID` | Application id. |
 | `DISCORD_GUILD_ID` | Server id. |
-| `DISCORD_CLIENTS_CATEGORY_NAME` | Base category name. Defaults to `clients`; overflow goes to `clients-2`, `clients-3`. |
-| `DISCORD_CATEGORY_MAX_CHANNELS` | Channels per category. Defaults to 50, the Discord maximum. |
-| `DISCORD_MAX_NEW_CHANNELS_PER_RUN` | Safety cap on channels created per run. Defaults to 25. |
 | `DISCORD_PRANJAL_USER_IDS` | Comma-separated Discord ids of the LinkedIn and cover letter assignees. |
 | `DISCORD_ONBOARDING_ENABLED` | Master switch. Defaults to false. |
 | `DISCORD_BOT_DRY_RUN` | Defaults to true. Records what would be sent without posting. |

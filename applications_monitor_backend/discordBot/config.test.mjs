@@ -21,7 +21,7 @@ test('assignee ids are trimmed, deduped, digits only; junk dropped', () => {
 
 test('defaults and parsing of the other fields', () => {
   const c = loadOnboardingConfig({});
-  assert.equal(c.categoryName, 'clients');
+  assert.equal(c.categoryName, 'client-onboarding');
   assert.equal(c.categoryMaxChannels, 50);
   assert.equal(c.maxNewChannelsPerRun, 25);
   assert.equal(c.newClientWindowDays, 30);
@@ -41,12 +41,9 @@ test('config is frozen and has no token', () => {
   assert.ok(!JSON.stringify(c).includes('secret'));
 });
 
-test('category settings: name lowercased, cap clamped to Discord limit of 50', () => {
-  const c = loadOnboardingConfig({ DISCORD_CLIENTS_CATEGORY_NAME: ' Clients ', DISCORD_CATEGORY_MAX_CHANNELS: '100', DISCORD_MAX_NEW_CHANNELS_PER_RUN: '5' });
-  assert.equal(c.categoryName, 'clients');
+test('category settings are fixed constants and ignore env', () => {
+  const c = loadOnboardingConfig({ DISCORD_CLIENTS_CATEGORY_NAME: 'x', DISCORD_CATEGORY_MAX_CHANNELS: '10', DISCORD_MAX_NEW_CHANNELS_PER_RUN: '1' });
+  assert.equal(c.categoryName, 'client-onboarding');
   assert.equal(c.categoryMaxChannels, 50);
-  assert.equal(c.maxNewChannelsPerRun, 5);
-  assert.equal(loadOnboardingConfig({ DISCORD_CATEGORY_MAX_CHANNELS: '20' }).categoryMaxChannels, 20);
-  assert.equal(loadOnboardingConfig({ DISCORD_CATEGORY_MAX_CHANNELS: 'x' }).categoryMaxChannels, 50);
-  assert.equal(loadOnboardingConfig({ DISCORD_CATEGORY_MAX_CHANNELS: '0' }).categoryMaxChannels, 50);
+  assert.equal(c.maxNewChannelsPerRun, 25);
 });
