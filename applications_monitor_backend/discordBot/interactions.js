@@ -24,7 +24,7 @@ const NOT_DONE_TEXT = {
 };
 
 const RESOLVED_TEXT = {
-  resume: (name, by, day) => `Resume done and linked for **${name}**. Confirmed by <@${by}> on ${day}.`,
+  resume: (name, by, day) => `Resume done for **${name}**. Confirmed by <@${by}> on ${day}.`,
   linkedin: (name, by, day) => `LinkedIn optimization done for **${name}**. Confirmed by <@${by}> on ${day}.`,
   cover: (name, by, day) => `Cover letter done for **${name}**. Confirmed by <@${by}> on ${day}.`,
 };
@@ -101,18 +101,27 @@ function followNeedsFor(planType) {
   return { linkedin: n.linkedin, cover: n.coverLetter, list: [n.linkedin && 'linkedin', n.coverLetter && 'cover'].filter(Boolean) };
 }
 
+/** First plain email inside "(...)" in a bot message, else ''. Only used by the test flow. */
+function extractEmail(content) {
+  const m = /\(([^()\s@]+@[^()\s@]+\.[^()\s]+)\)/.exec(String(content ?? ''));
+  return m ? m[1] : '';
+}
+
 /** Test flow: fixed Executive plan, no database, same state machine. */
 async function handleTestClick({ interaction, deps, parsed, clickerId, customId }) {
-  const threadName = String(interaction.channel?.name ?? '').replace(/^TEST\s+/i, '');
+  const threadName = String(interaction.channel?.name ?? '').replace(/^test[-\s]+/i, '');
   const hasName = threadName.trim() !== '';
   const name = hasName ? sanitizeName(threadName) : 'the test client';
   const day = istDay(deps.now ? deps.now() : new Date());
-  const { csmDiscordId, resumeMakerId, need } = parsed;
+  const { csmDiscordId, csmDiscordIds, resumeMakerId, need } = parsed;
+  // The thread's first message carries "(email)"; read it back so later messages show it too.
+  const clientEmail = extractEmail(interaction.message?.content);
 
   if (need === 'resume') {
     const message = buildFollowUpMessage({
       needs: ['linkedin', 'cover'],
       clientName: name,
+      clientEmail,
       planType: 'Executive',
       dateLabel: istDateLabel(deps.now ? deps.now() : new Date()),
       assigneeUserIds: deps.config?.linkedinCoverLetterUserIds || [],
@@ -132,9 +141,10 @@ async function handleTestClick({ interaction, deps, parsed, clickerId, customId 
   if (keepRows.length === 0) {
     await tryPost(deps, interaction, buildFinalMessage({
       clientName: name,
+      clientEmail,
       planType: 'Executive',
       needs: { linkedin: true, coverLetter: true },
-      csmDiscordId,
+      csmDiscordIds,
       testPrefix: true,
     }));
   }
@@ -198,6 +208,7 @@ export async function handleInteraction({ interaction, deps }) {
       }
       return buildFinalMessage({
         clientName: name,
+        clientEmail: user.email,
         planType: user.planType,
         needs: { linkedin: needs.linkedin, coverLetter: needs.cover },
         csmDiscordId,

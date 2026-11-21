@@ -27,6 +27,10 @@ function parseNonNegativeInt(raw, fallback) {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 }
 
+export const CLIENT_CATEGORY_NAME = 'client-onboarding';
+export const CATEGORY_MAX_CHANNELS = 50;
+export const MAX_NEW_CHANNELS_PER_RUN = 25;
+
 /**
  * @param {Record<string, string|undefined>} [env]
  */
@@ -37,9 +41,12 @@ export function loadOnboardingConfig(env = process.env) {
     // Safe by default: only an explicit "false" turns real posting on.
     dryRun: env.DISCORD_BOT_DRY_RUN !== 'false',
     guildId: String(env.DISCORD_GUILD_ID || '').trim(),
-    clientsChannelId: String(env.DISCORD_CLIENTS_CHANNEL_ID || '').trim(),
-    clientsChannelName: 'clients',
-    allowCreateChannel: env.DISCORD_ALLOW_CREATE_CHANNEL !== 'false',
+    // One text channel per client, grouped in categories "client-onboarding", "client-onboarding-2", ...
+    // Fixed on purpose (no env vars). Discord allows at most 50 channels per category.
+    categoryName: CLIENT_CATEGORY_NAME,
+    categoryMaxChannels: CATEGORY_MAX_CHANNELS,
+    // Safety valve: new channels created per run. The 8:30 run continues where 8:00 stopped.
+    maxNewChannelsPerRun: MAX_NEW_CHANNELS_PER_RUN,
     linkedinCoverLetterUserIds: Object.freeze(parseIdList(env.DISCORD_PRANJAL_USER_IDS)),
     newClientWindowDays: windowDays > 0 ? windowDays : 30,
     excludePlans: Object.freeze(['Free Trial']),
