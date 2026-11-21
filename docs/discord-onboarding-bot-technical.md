@@ -4,8 +4,12 @@
 The bot is an HTTP interactions endpoint, not a gateway (websocket) bot.
 Discord POSTs button clicks to `POST /api/discord/interactions`, and the bot answers in the HTTP response.
 We chose this because the host suspends idle web services, and a gateway bot needs a process that stays alive.
-Posting messages happens in a daily sweep, triggered by a GitHub Action calling `POST /api/internal/run-discord-onboarding`.
-There is no in-process node-cron job for this feature.
+Posting messages happens in a daily sweep. The backend runs it itself with node-cron at 8:00 and 8:30 AM IST (registered with the other crons in `index.js`).
+The 8:30 run retries anything the 8:00 run could not finish.
+The secret-protected `POST /api/internal/run-discord-onboarding` runs the same sweep on demand.
+In-process cron only ticks while the instance is awake, so a GitHub Action (`.github/workflows/discord-onboarding-cron.yml`) calls the endpoint at 8:05 and 8:35 AM IST as a wake-up net for a suspended host.
+All triggers share one runner (`discordBot/sweepRunner.js`), so two sweeps never run at once, and the endpoint answers 409 if one is running.
+The sweep is idempotent per client, need and IST day, so extra triggers never double-post.
 
 Code lives in `applications_monitor_backend/discordBot/`.
 `discordRoutes.js` registers both routes before the global `express.json()`, because Discord signature checks need the raw body.
@@ -116,7 +120,7 @@ The GitHub repo needs a secret `DISCORD_CRON_SECRET` with the same value.
 5. Run the "Discord Onboarding Cron" workflow with `workflow_dispatch` for a dry run.
 6. Review the summary counts and the `dry_run` rows in `discord_onboarding_alerts`.
 7. Set `DISCORD_BOT_DRY_RUN=false` and `DISCORD_ONBOARDING_ENABLED=true`, then redeploy.
-8. Watch the next 8:00 AM IST run (cron `30 2 * * *` UTC).
+8. Watch the next 8:00 AM IST run in the Render logs (`[discord-onboarding] cron 8:00 IST: ...`).
 
 ## Rollback
 Set `DISCORD_ONBOARDING_ENABLED=false` and redeploy.
