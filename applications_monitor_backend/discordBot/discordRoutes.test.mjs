@@ -173,3 +173,10 @@ test('overlapping sweeps get 409, and the guard releases afterwards', async () =
   await h(req(), res3);
   assert.equal(res3.statusCode, 200);
 });
+
+test('a busy shared runner (cron already sweeping) answers 409', async () => {
+  const h = setup({ runSweep: async () => { throw Object.assign(new Error('sweep already running'), { busy: true }); } })['POST /api/internal/run-discord-onboarding'][0];
+  const res = mkRes();
+  await h(mkReq({ headers: { 'x-cron-secret': 'sekret' } }), res);
+  assert.equal(res.statusCode, 409);
+});

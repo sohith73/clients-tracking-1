@@ -22,7 +22,7 @@ function client(id, over = {}) {
 }
 
 function makeDeps(clients, opts = {}) {
-  const calls = { post: [], createThread: [], createCategory: [], createChannel: [], unarchive: [], saveThread: [], mark: [] };
+  const calls = { grant: [], post: [], createThread: [], createCategory: [], createChannel: [], unarchive: [], saveThread: [], mark: [] };
   const claimed = new Set();
   const threads = new Map(Object.entries(opts.threads || {}));
   const deps = {
@@ -30,6 +30,7 @@ function makeDeps(clients, opts = {}) {
       listGuildChannels: async () => opts.channels || [],
       createCategory: async (g, { name }) => { calls.createCategory.push(name); return { id: `cat${calls.createCategory.length}` }; },
       createTextChannel: async (g, body) => { calls.createChannel.push(body); return { id: `th${calls.createChannel.length}` }; },
+      grantChannelAccess: async (ch, ids) => { calls.grant.push({ ch, ids }); },
       createThread: async () => { throw new Error('threads are no longer used'); },
       getChannel: async (id) => {
         if (opts.missingThreads?.includes(id)) throw Object.assign(new Error('Unknown Channel'), { status: 404 });
@@ -292,4 +293,14 @@ test('reminderMaxDays stops repeat reminders', async () => {
   const r = await runOnboardingSweep({ deps, config: cfg({ reminderMaxDays: 3 }), now: NOW });
   assert.equal(calls.post.length, 0);
   assert.equal(r.skippedMaxDays, 1);
+});
+
+test('private channels: created hidden from everyone, tagged users and bot allowed, access granted before posting', async () => {
+  const members = [{ user: { id: '900900900900', username: 'sam', global_name: 'Sam Lee' } }];
+  const h = makeDeps([client('u1')], { members });
+  await runOnboardingSweep({ deps: h.deps, config: cfg({ botUserId: '777777777777' }), now: NOW });
+  const ow = h.calls.createChannel[0].permissionOverwrites;
+  assert.deepEqual(ow[0], { id: 'g1', type: 0, allow: '0', deny: '1024' });
+  assert.deepEqual(ow.slice(1).map((o) => o.id).sort(), ['777777777777', '900900900900']);
+  assert.deepEqual(h.calls.grant, [{ ch: 'th1', ids: ['900900900900'] }]);
 });

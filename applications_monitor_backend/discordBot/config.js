@@ -41,6 +41,8 @@ export function loadOnboardingConfig(env = process.env) {
     // Safe by default: only an explicit "false" turns real posting on.
     dryRun: env.DISCORD_BOT_DRY_RUN !== 'false',
     guildId: String(env.DISCORD_GUILD_ID || '').trim(),
+    // The bot's own user id equals its application id; it keeps access to private client channels.
+    botUserId: String(env.DISCORD_APPLICATION_ID || '').trim(),
     // One text channel per client, grouped in categories "client-onboarding", "client-onboarding-2", ...
     // Fixed on purpose (no env vars). Discord allows at most 50 channels per category.
     categoryName: CLIENT_CATEGORY_NAME,

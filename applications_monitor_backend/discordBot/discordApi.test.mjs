@@ -141,6 +141,23 @@ test('createTextChannel sends type 0', async () => {
   assert.equal(calls[0].body.name, 'clients');
 });
 
+test('createTextChannel passes parent and permission overwrites', async () => {
+  const { api, calls } = setup([res(200, {})]);
+  await api.createTextChannel('12345678', { name: 'n', parentId: '87654321', permissionOverwrites: [{ id: '12345678', type: 0, allow: '0', deny: '1024' }] });
+  assert.equal(calls[0].body.parent_id, '87654321');
+  assert.equal(calls[0].body.permission_overwrites[0].deny, '1024');
+});
+
+test('grantChannelAccess PUTs one overwrite per unique user and rejects bad ids', async () => {
+  const { api, calls } = setup([res(204), res(204)]);
+  await api.grantChannelAccess('12345678', ['900000', '900000', '900001']);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].init.method, 'PUT');
+  assert.ok(calls[0].url.endsWith('/channels/12345678/permissions/900000'));
+  assert.deepEqual(calls[0].body, { type: 1, allow: '68608', deny: '0' });
+  await assert.rejects(() => api.grantChannelAccess('12345678', ['../x']), TypeError);
+});
+
 test('searchGuildMembers builds query string', async () => {
   const { api, calls } = setup([res(200, [])]);
   await api.searchGuildMembers('12345678', 'a b&c', 5);

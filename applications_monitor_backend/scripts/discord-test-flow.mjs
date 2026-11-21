@@ -41,6 +41,8 @@ async function main() {
     max: config.categoryMaxChannels,
     name: start.channelName,
     topic: 'Onboarding bot test channel, safe to delete',
+    viewerIds: [input.resumeMaker],
+    botUserId: config.botUserId,
   });
   const sent = await discord.postMessage(made.id, start.message);
   console.log(`Posted in channel ${made.id} (category ${made.categoryId}), message id ${sent?.id || 'unknown'}.`);

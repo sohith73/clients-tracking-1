@@ -78,6 +78,7 @@ export function registerDiscordRoutes(app, { express, getDeps, getConfig, getPub
       const summary = await runSweep();
       return res.status(200).json({ ok: true, ...(summary || {}) });
     } catch (err) {
+      if (err?.busy) return res.status(409).json({ error: 'sweep already running' });
       if (err?.notConfigured) return res.status(503).json({ error: 'discord bot not configured' });
       console.error('[discord-onboarding] sweep error:', err?.message);
       return res.status(500).json({ error: 'sweep failed' });

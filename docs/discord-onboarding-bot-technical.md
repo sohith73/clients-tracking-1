@@ -4,8 +4,12 @@
 The bot is an HTTP interactions endpoint, not a gateway (websocket) bot.
 Discord POSTs button clicks to `POST /api/discord/interactions`, and the bot answers in the HTTP response.
 We chose this because the host suspends idle web services, and a gateway bot needs a process that stays alive.
-Posting messages happens in a daily sweep, triggered by a GitHub Action calling `POST /api/internal/run-discord-onboarding`.
-There is no in-process node-cron job for this feature.
+Posting messages happens in a daily sweep. The backend runs it itself with node-cron at 8:00 and 8:30 AM IST (registered with the other crons in `index.js`).
+The 8:30 run retries anything the 8:00 run could not finish.
+The secret-protected `POST /api/internal/run-discord-onboarding` runs the same sweep on demand.
+In-process cron only ticks while the instance is awake, so a GitHub Action (`.github/workflows/discord-onboarding-cron.yml`) calls the endpoint at 8:05 and 8:35 AM IST as a wake-up net for a suspended host.
+All triggers share one runner (`discordBot/sweepRunner.js`), so two sweeps never run at once, and the endpoint answers 409 if one is running.
+The sweep is idempotent per client, need and IST day, so extra triggers never double-post.
 
 Code lives in `applications_monitor_backend/discordBot/`.
 `discordRoutes.js` registers both routes before the global `express.json()`, because Discord signature checks need the raw body.
@@ -18,7 +22,11 @@ Every client gets their own text channel, named `<clientNumber>-<name>` (for exa
 Channels live in categories named `client-onboarding`, `client-onboarding-2`, `client-onboarding-3` and so on.
 Discord allows at most 50 channels in one category, so the bot fills `client-onboarding`, and when it is full it creates `client-onboarding-2` and continues there.
 The category name, the 50 cap and the 25 new channels per run are constants in `discordBot/config.js`, not env vars.
-The bot needs the Manage Channels permission to make categories and channels.
+Every client channel is private: `@everyone` cannot view it.
+The channel is created with access for the bot (its user id is `DISCORD_APPLICATION_ID`) and the person tagged in the first message.
+Before each later message, the bot grants view, send and history access to exactly the users that message tags (Pranjal's accounts, then the CSMs), so people only see a client once they are tagged.
+Server admins see everything.
+The bot needs Manage Channels to make categories and channels, and Manage Roles or Administrator to set per-user access.
 At most 25 channels are created per run, and the 8:30 run continues the rest.
 Everything happens inside that channel, strictly in this order.
 1. Resume stage: the 8 AM sweep posts "Resume not made for {client}" and tags the resume maker.
@@ -112,7 +120,7 @@ The GitHub repo needs a secret `DISCORD_CRON_SECRET` with the same value.
 5. Run the "Discord Onboarding Cron" workflow with `workflow_dispatch` for a dry run.
 6. Review the summary counts and the `dry_run` rows in `discord_onboarding_alerts`.
 7. Set `DISCORD_BOT_DRY_RUN=false` and `DISCORD_ONBOARDING_ENABLED=true`, then redeploy.
-8. Watch the next 8:00 AM IST run (cron `30 2 * * *` UTC).
+8. Watch the next 8:00 AM IST run in the Render logs (`[discord-onboarding] cron 8:00 IST: ...`).
 
 ## Rollback
 Set `DISCORD_ONBOARDING_ENABLED=false` and redeploy.

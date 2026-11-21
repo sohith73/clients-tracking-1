@@ -7,6 +7,7 @@
  *     createCategory(guildId, { name }) -> { id }
  *     createTextChannel(guildId, { name, topic, parentId }) -> { id }
  *     getChannel(id) -> { id }                            // 404 means the client channel was deleted
+ *     grantChannelAccess(channelId, userIds)               // private channel: let tagged users in
  *     postMessage(channelId, { content, components, allowedUserIds }) -> { id }
  *     listGuildMembers(guildId) -> member[]
  *   }
@@ -55,7 +56,7 @@ function is404(e) {
  * (404), make a new one. `ctx` holds the cached guild channel list and the
  * number of channels created so far this run.
  */
-async function ensureClientChannel({ deps, config, user, onboardingJob, userId, ctx }) {
+async function ensureClientChannel({ deps, config, user, onboardingJob, userId, ctx, viewerIds }) {
   const stored = await deps.getThread(userId);
   if (stored?.threadId) {
     try {
@@ -75,6 +76,8 @@ async function ensureClientChannel({ deps, config, user, onboardingJob, userId, 
     max: config.categoryMaxChannels,
     name: clientChannelName({ user, onboardingJob, userId }),
     topic: `Onboarding for ${String(user.name || 'client').slice(0, 80)}`,
+    viewerIds,
+    botUserId: config.botUserId,
   });
   if (made.created) ctx.created++;
   await deps.saveThread({
@@ -250,8 +253,10 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
       }
       try {
         if (!threadId) {
-          threadId = await ensureClientChannel({ deps, config, user, onboardingJob: w.onboardingJob, userId, ctx });
+          threadId = await ensureClientChannel({ deps, config, user, onboardingJob: w.onboardingJob, userId, ctx, viewerIds: message.allowedUserIds });
         }
+        // Private channels: whoever this message tags must be able to see it (idempotent, also covers reused channels).
+        await deps.discord.grantChannelAccess(threadId, message.allowedUserIds);
         const sent = await deps.discord.postMessage(threadId, {
           content: message.content,
           components: message.components,

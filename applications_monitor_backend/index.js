@@ -2,6 +2,7 @@ import { attendanceRouter } from './attendance/router.js';
 import express from 'express';
 import Stripe from 'stripe';
 import { registerDiscordRoutes } from './discordBot/discordRoutes.js';
+import { createSweepRunner, runSweepFromCron } from './discordBot/sweepRunner.js';
 import { createDiscordApi } from './discordBot/discordApi.js';
 import { loadOnboardingConfig } from './discordBot/config.js';
 import { runOnboardingSweep } from './discordBot/onboardingSweep.js';
@@ -636,7 +637,10 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
 // ── Discord onboarding bot (HTTP interactions, not a gateway bot) ──────────
 // Registered BEFORE express.json(): Discord signature checks need the raw body.
 // Everything is built lazily so missing env vars never crash boot.
-// Trigger is a GitHub Action (.github/workflows/discord-onboarding-cron.yml), no node-cron.
+// Triggers: in-process node-cron at 8:00 and 8:30 AM IST (see the cron block near the other
+// schedules), plus the secret-protected HTTP endpoint, which also wakes a suspended instance.
+// All of them share one runner, so two sweeps can never run at the same time.
+let runDiscordOnboardingOnce = async () => { throw Object.assign(new Error('discord bot not configured'), { notConfigured: true }); };
 {
   let discordState = null;
   const getDiscordState = () => {
@@ -704,16 +708,17 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
     discordState = { config, sweepDeps, interactionDeps };
     return discordState;
   };
+  runDiscordOnboardingOnce = createSweepRunner(async () => {
+    const state = getDiscordState();
+    if (!state) throw Object.assign(new Error('discord bot not configured'), { notConfigured: true });
+    return runOnboardingSweep({ deps: state.sweepDeps, config: state.config, now: new Date() });
+  });
   registerDiscordRoutes(app, {
     express,
     getDeps: async () => getDiscordState()?.interactionDeps || null,
     getConfig: () => getDiscordState()?.config || null,
     getPublicKey: () => process.env.DISCORD_APP_PUBLIC_KEY || '',
-    runSweep: async () => {
-      const state = getDiscordState();
-      if (!state) throw Object.assign(new Error('discord bot not configured'), { notConfigured: true });
-      return runOnboardingSweep({ deps: state.sweepDeps, config: state.config, now: new Date() });
-    },
+    runSweep: runDiscordOnboardingOnce,
     cronSecret: process.env.DISCORD_CRON_SECRET || '',
   });
 }
@@ -10726,6 +10731,18 @@ if (DISCORD_ADD_SHORTFALL_WEBHOOK) {
         console.log('📬 [Admin Digest] Cron scheduled daily 9:00 AM IST');
       } catch (e) {
         console.error('❌ [Admin Digest] cron registration failed:', e?.message || e);
+      }
+      // Discord onboarding sweep: 8:00 AM IST, and again at 8:30 AM IST to retry anything the
+      // first run could not finish. The sweep is idempotent per client, need and IST day, and
+      // both runs share one runner, so they never overlap and never double-post. Like every
+      // in-process cron here it only ticks while this instance is awake; the HTTP trigger covers
+      // a suspended instance.
+      try {
+        cron.schedule('0 8 * * *', () => runSweepFromCron({ run: runDiscordOnboardingOnce, label: 'cron 8:00 IST' }), { timezone: 'Asia/Kolkata' });
+        cron.schedule('30 8 * * *', () => runSweepFromCron({ run: runDiscordOnboardingOnce, label: 'cron 8:30 IST' }), { timezone: 'Asia/Kolkata' });
+        console.log('📬 [Discord Onboarding] Cron scheduled daily 8:00 and 8:30 AM IST');
+      } catch (e) {
+        console.error('❌ [Discord Onboarding] cron registration failed:', e?.message || e);
       }
       // Discord tag reminders: re-ping unresolved tags every 3h (sweep every 30 min)
       try {

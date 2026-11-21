@@ -5,20 +5,19 @@ name: Discord Onboarding Cron
 # Endpoint: POST /api/internal/run-discord-onboarding (needs x-cron-secret).
 # Add a repo secret named DISCORD_CRON_SECRET, matching the backend env var.
 #
-# Two schedules, one job:
-#   - 8:00 AM IST: the main run.
-#   - 8:30 AM IST: a safety net. GitHub sometimes delays or drops scheduled runs,
-#     and a run can also end with failed posts. The sweep is idempotent per
-#     client, need and IST day (unique alert row), so the second run posts only
-#     what the first one did not. It never double-posts.
-# The concurrency group makes the two runs queue instead of overlapping, and the
-# backend answers 409 if a sweep is already running, which counts as success here.
+# The backend runs its own cron at 8:00 and 8:30 AM IST (node-cron in index.js). This
+# workflow is only a wake-up net for a suspended host: a suspended instance cannot run its
+# own cron, but this inbound request wakes it and runs the sweep. It fires 5 minutes after
+# each backend run. The sweep is idempotent per client, need and IST day, and every trigger
+# shares one runner on the backend, so these runs never overlap or double-post: when the
+# backend already did the work they post nothing, and a busy backend answers 409, which
+# counts as success here.
 
 on:
   schedule:
-    # GitHub Actions cron is UTC. 08:00 IST = 02:30 UTC, 08:30 IST = 03:00 UTC.
-    - cron: "30 2 * * *"
-    - cron: "0 3 * * *"
+    # GitHub Actions cron is UTC. 08:05 IST = 02:35 UTC, 08:35 IST = 03:05 UTC.
+    - cron: "35 2 * * *"
+    - cron: "5 3 * * *"
   workflow_dispatch: {}
 
 concurrency:
@@ -34,7 +33,7 @@ jobs:
         env:
           BASE_URL: https://clients-tracking-backend-580t.onrender.com
           CRON_SECRET: ${{ secrets.DISCORD_CRON_SECRET }}
-          RUN_KIND: ${{ github.event.schedule == '0 3 * * *' && 'safety-net' || 'main' }}
+          RUN_KIND: ${{ github.event.schedule == '5 3 * * *' && 'second' || 'first' }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET:-}" ]; then
@@ -52,7 +51,7 @@ jobs:
               echo "Sweep summary:"; cat resp.json; echo
               FAILED=$(jq -r '.failed // 0' resp.json)
               if [ "$FAILED" != "0" ]; then
-                echo "::error::Sweep finished with $FAILED failed post(s). The safety-net run retries them."
+                echo "::error::Sweep finished with $FAILED failed post(s). The next run retries them."
                 exit 1
               fi
               exit 0
