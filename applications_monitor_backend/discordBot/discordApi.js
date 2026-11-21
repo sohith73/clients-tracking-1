@@ -8,6 +8,11 @@
  * header, and the response body is truncated.
  */
 
+/** View Channel (1024) + Send Messages (2048) + Read Message History (65536). */
+export const CHANNEL_VIEWER_PERMS = '68608';
+/** View Channel only, used to hide a channel from @everyone. */
+export const VIEW_CHANNEL = '1024';
+
 export class DiscordApiError extends Error {
   /**
    * @param {string} message
@@ -148,7 +153,7 @@ export function createDiscordApi({
       return request('GET', `/guilds/${enc(guildId)}/channels`);
     },
 
-    async createTextChannel(guildId, { name, topic, parentId } = {}) {
+    async createTextChannel(guildId, { name, topic, parentId, permissionOverwrites } = {}) {
       assertId(guildId, 'guild id');
       const body = { name, type: 0 };
       if (topic) body.topic = truncate(topic, 1024);
@@ -156,7 +161,22 @@ export function createDiscordApi({
         assertId(parentId, 'category id');
         body.parent_id = String(parentId);
       }
+      if (Array.isArray(permissionOverwrites) && permissionOverwrites.length) body.permission_overwrites = permissionOverwrites;
       return request('POST', `/guilds/${enc(guildId)}/channels`, { body });
+    },
+
+    /**
+     * Lets each user see, read and write in a (private) channel. Idempotent, one PUT per user.
+     * Needs Manage Roles or Administrator on the bot.
+     */
+    async grantChannelAccess(channelId, userIds = []) {
+      assertId(channelId, 'channel id');
+      for (const userId of [...new Set((userIds || []).map(String))]) {
+        assertId(userId, 'user id');
+        await request('PUT', `/channels/${enc(channelId)}/permissions/${enc(userId)}`, {
+          body: { type: 1, allow: CHANNEL_VIEWER_PERMS, deny: '0' },
+        });
+      }
     },
 
     /** Channel category (type 4). Needs Manage Channels. */

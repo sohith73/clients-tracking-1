@@ -12,9 +12,12 @@ const click = (customId, clicker = '111111111111') => ({
 });
 
 function makeDeps(over = {}) {
-  const calls = { markResolved: [], posts: [], records: [] };
+  const calls = { markResolved: [], posts: [], records: [], grants: [] };
   const deps = {
-    discord: { postMessage: async (ch, body) => { calls.posts.push({ ch, body }); return { id: 'm1' }; } },
+    discord: {
+      postMessage: async (ch, body) => { calls.posts.push({ ch, body }); return { id: 'm1' }; },
+      grantChannelAccess: async (ch, ids) => { calls.grants.push({ ch, ids }); },
+    },
     config: { linkedinCoverLetterUserIds: ['111111', '222222'] },
     recordFollowUp: async (a) => { calls.records.push(a); },
     loadUser: async () => ({ name: 'Asha', email: 'asha@x.com', resumeLink: [] }),
@@ -340,4 +343,27 @@ test('test flow: several CSMs are all tagged, email and dashboard carry through'
   assert.deepEqual(fin.allowedUserIds, [CSM, CSM2]);
   assert.ok(fin.content.includes(`<@${CSM}> <@${CSM2}>`));
   assert.ok(fin.content.includes('(sohith@x.com)'));
+});
+
+test('private channels: each follow-up grants access to exactly the users it tags, before posting', async () => {
+  const { deps, calls } = makeDeps({ loadUser: withPlan('Executive') });
+  await handleInteraction({ interaction: resumeClick(), deps });
+  assert.deepEqual(calls.grants, [{ ch: THREAD, ids: ['111111', '222222'] }]);
+  assert.equal(calls.posts.length, 1);
+});
+
+test('a failed access grant is logged but the message still posts', async () => {
+  const errs = [];
+  const orig = console.error;
+  console.error = (...a) => errs.push(a.join(' '));
+  try {
+    const { deps, calls } = makeDeps({ loadUser: withPlan('Executive') });
+    deps.discord.grantChannelAccess = async () => { throw new Error('Missing Permissions'); };
+    const r = await handleInteraction({ interaction: resumeClick(), deps });
+    assert.equal(r.type, 7);
+    assert.equal(calls.posts.length, 1);
+    assert.ok(errs.some((e) => e.includes('grant access failed')));
+  } finally {
+    console.error = orig;
+  }
 });

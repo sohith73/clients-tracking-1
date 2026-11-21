@@ -4,6 +4,7 @@
  * "<base>", "<base>-2", "<base>-3", ... and filled in that order.
  * Pure helpers plus one function that talks to Discord through `discord`.
  */
+import { CHANNEL_VIEWER_PERMS, VIEW_CHANNEL } from './discordApi.js';
 
 const CATEGORY = 4;
 const TEXT = 0;
@@ -65,12 +66,24 @@ export function planCategory({ channels, baseName, max }) {
 }
 
 /**
+ * Private channel: @everyone (role id = guild id) cannot view it; only the listed users and the bot can.
+ * @param {{guildId: string, viewerIds?: string[], botUserId?: string}} p
+ */
+export function privateOverwrites({ guildId, viewerIds = [], botUserId = '' }) {
+  const ids = [...new Set([botUserId, ...viewerIds].map((x) => String(x || '').trim()).filter((x) => /^\d{5,25}$/.test(x)))];
+  return [
+    { id: String(guildId), type: 0, allow: '0', deny: VIEW_CHANNEL },
+    ...ids.map((id) => ({ id, type: 1, allow: CHANNEL_VIEWER_PERMS, deny: '0' })),
+  ];
+}
+
+/**
  * Create a text channel in the right category, making the category if needed.
  * `channels` is the caller's cached guild channel list; it is updated in place so
  * the next call in the same run sees the new category and channel.
  * @returns {Promise<{id: string, categoryId: string, created: boolean}>}
  */
-export async function createClientChannel({ discord, guildId, channels, baseName, max, name, topic }) {
+export async function createClientChannel({ discord, guildId, channels, baseName, max, name, topic, viewerIds = [], botUserId = '' }) {
   // Reuse an identical name under our categories (guards against an orphan from a half-failed run).
   const ours = new Set(channels.filter((c) => c.type === CATEGORY && parseCategoryIndex(c.name, baseName) !== null).map((c) => c.id));
   const existing = channels.find((c) => (c.type === undefined || c.type === TEXT) && c.name === name && ours.has(c.parent_id));
@@ -82,7 +95,12 @@ export async function createClientChannel({ discord, guildId, channels, baseName
     channels.push({ id: cat.id, name: plan.name, type: CATEGORY, parent_id: null });
     plan = { categoryId: cat.id, name: plan.name };
   }
-  const ch = await discord.createTextChannel(guildId, { name, topic, parentId: plan.categoryId });
+  const ch = await discord.createTextChannel(guildId, {
+    name,
+    topic,
+    parentId: plan.categoryId,
+    permissionOverwrites: privateOverwrites({ guildId, viewerIds, botUserId }),
+  });
   channels.push({ id: ch.id, name, type: TEXT, parent_id: plan.categoryId });
   return { id: ch.id, categoryId: plan.categoryId, created: true };
 }

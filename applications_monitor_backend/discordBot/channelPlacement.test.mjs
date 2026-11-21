@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChannelName, categoryNameFor, createClientChannel, parseCategoryIndex, planCategory, slugify } from './channelPlacement.js';
+import { privateOverwrites, buildChannelName, categoryNameFor, createClientChannel, parseCategoryIndex, planCategory, slugify } from './channelPlacement.js';
 
 const cat = (id, name) => ({ id, name, type: 4, parent_id: null });
 const txt = (id, name, parent) => ({ id, name, type: 0, parent_id: parent });
@@ -72,4 +72,21 @@ test('createClientChannel reuses an identical channel already in our category (o
   const other = [cat('e', 'engineers'), txt('y1', '5788-sohith', 'e')];
   const r2 = await createClientChannel({ discord: d, guildId: '12345', channels: other, baseName: 'clients', max: 50, name: '5788-sohith' });
   assert.equal(r2.created, true);
+});
+
+test('privateOverwrites hides the channel from @everyone and allows only valid ids', () => {
+  const ow = privateOverwrites({ guildId: '12345', viewerIds: ['900000', '900000', 'abc', ''], botUserId: '777777' });
+  assert.deepEqual(ow[0], { id: '12345', type: 0, allow: '0', deny: '1024' });
+  assert.deepEqual(ow.slice(1), [
+    { id: '777777', type: 1, allow: '68608', deny: '0' },
+    { id: '900000', type: 1, allow: '68608', deny: '0' },
+  ]);
+  assert.equal(privateOverwrites({ guildId: '12345' }).length, 1);
+});
+
+test('createClientChannel creates the channel private', async () => {
+  const d = fakeDiscord();
+  await createClientChannel({ discord: d, guildId: '12345', channels: [], baseName: 'c', max: 50, name: 'n', viewerIds: ['900000'], botUserId: '777777' });
+  assert.equal(d.calls.ch[0].permissionOverwrites[0].deny, '1024');
+  assert.equal(d.calls.ch[0].permissionOverwrites.length, 3);
 });

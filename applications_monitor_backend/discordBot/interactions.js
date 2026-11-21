@@ -85,6 +85,14 @@ async function tryPost(deps, interaction, message) {
     const channelId = String(interaction.channel_id ?? '');
     if (!deps.discord || typeof deps.discord.postMessage !== 'function') throw new Error('no discord client');
     if (!/^\d{5,25}$/.test(channelId)) throw new Error('no thread id on interaction');
+    // Private channels: whoever this message tags must be able to see it. A failed grant is logged, the post still goes out.
+    if (typeof deps.discord.grantChannelAccess === 'function' && message.allowedUserIds?.length) {
+      try {
+        await deps.discord.grantChannelAccess(channelId, message.allowedUserIds);
+      } catch (err) {
+        console.error('[discord-interactions] grant access failed:', String(err?.message || err).slice(0, 200));
+      }
+    }
     return await deps.discord.postMessage(channelId, {
       content: message.content,
       components: message.components,

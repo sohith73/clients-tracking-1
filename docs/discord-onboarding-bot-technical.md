@@ -18,7 +18,11 @@ Every client gets their own text channel, named `<clientNumber>-<name>` (for exa
 Channels live in categories named `client-onboarding`, `client-onboarding-2`, `client-onboarding-3` and so on.
 Discord allows at most 50 channels in one category, so the bot fills `client-onboarding`, and when it is full it creates `client-onboarding-2` and continues there.
 The category name, the 50 cap and the 25 new channels per run are constants in `discordBot/config.js`, not env vars.
-The bot needs the Manage Channels permission to make categories and channels.
+Every client channel is private: `@everyone` cannot view it.
+The channel is created with access for the bot (its user id is `DISCORD_APPLICATION_ID`) and the person tagged in the first message.
+Before each later message, the bot grants view, send and history access to exactly the users that message tags (Pranjal's accounts, then the CSMs), so people only see a client once they are tagged.
+Server admins see everything.
+The bot needs Manage Channels to make categories and channels, and Manage Roles or Administrator to set per-user access.
 At most 25 channels are created per run, and the 8:30 run continues the rest.
 Everything happens inside that channel, strictly in this order.
 1. Resume stage: the 8 AM sweep posts "Resume not made for {client}" and tags the resume maker.
