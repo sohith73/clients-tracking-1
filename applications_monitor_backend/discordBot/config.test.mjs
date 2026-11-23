@@ -2,16 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadOnboardingConfig } from './config.js';
 
-test('dryRun defaults to true and only an explicit false disables it', () => {
-  assert.equal(loadOnboardingConfig({}).dryRun, true);
-  assert.equal(loadOnboardingConfig({ DISCORD_BOT_DRY_RUN: '0' }).dryRun, true);
-  assert.equal(loadOnboardingConfig({ DISCORD_BOT_DRY_RUN: 'false' }).dryRun, false);
+test('live by default: dryRun only when the env explicitly says true', () => {
+  assert.equal(loadOnboardingConfig({}).dryRun, false);
+  assert.equal(loadOnboardingConfig({ DISCORD_BOT_DRY_RUN: '0' }).dryRun, false);
+  assert.equal(loadOnboardingConfig({ DISCORD_BOT_DRY_RUN: 'true' }).dryRun, true);
 });
 
-test('enabled only for the string true', () => {
-  assert.equal(loadOnboardingConfig({}).enabled, false);
+test('enabled by default: only the string false switches it off', () => {
+  assert.equal(loadOnboardingConfig({}).enabled, true);
   assert.equal(loadOnboardingConfig({ DISCORD_ONBOARDING_ENABLED: 'true' }).enabled, true);
-  assert.equal(loadOnboardingConfig({ DISCORD_ONBOARDING_ENABLED: '1' }).enabled, false);
+  assert.equal(loadOnboardingConfig({ DISCORD_ONBOARDING_ENABLED: 'false' }).enabled, false);
 });
 
 test('assignee ids are trimmed, deduped, digits only; junk dropped', () => {
