@@ -37,9 +37,10 @@ export const MAX_NEW_CHANNELS_PER_RUN = 25;
 export function loadOnboardingConfig(env = process.env) {
   const windowDays = parseNonNegativeInt(env.DISCORD_NEW_CLIENT_DAYS, 30);
   return Object.freeze({
-    enabled: env.DISCORD_ONBOARDING_ENABLED === 'true',
-    // Safe by default: only an explicit "false" turns real posting on.
-    dryRun: env.DISCORD_BOT_DRY_RUN !== 'false',
+    // Live by default, no env needed. The env vars are only emergency brakes:
+    // DISCORD_ONBOARDING_ENABLED=false stops the sweep, DISCORD_BOT_DRY_RUN=true makes it plan without posting.
+    enabled: env.DISCORD_ONBOARDING_ENABLED !== 'false',
+    dryRun: env.DISCORD_BOT_DRY_RUN === 'true',
     guildId: String(env.DISCORD_GUILD_ID || '').trim(),
     // The bot's own user id equals its application id; it keeps access to private client channels.
     botUserId: String(env.DISCORD_APPLICATION_ID || '').trim(),

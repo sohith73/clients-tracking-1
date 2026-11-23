@@ -7,7 +7,7 @@ We chose this because the host suspends idle web services, and a gateway bot nee
 Posting messages happens in a daily sweep. The backend runs it itself with node-cron at 8:00 and 8:30 AM IST (registered with the other crons in `index.js`).
 The 8:30 run retries anything the 8:00 run could not finish.
 The secret-protected `POST /api/internal/run-discord-onboarding` runs the same sweep on demand.
-In-process cron only ticks while the instance is awake, so a GitHub Action (`.github/workflows/discord-onboarding-cron.yml`) calls the endpoint at 8:05 and 8:35 AM IST as a wake-up net for a suspended host.
+The in-process cron only ticks while the instance is awake, so the host must stay up at 8:00 AM IST. There is no GitHub Action. A missed day is not lost: the sweep looks at every client from the last 30 days, so the next run catches up.
 All triggers share one runner (`discordBot/sweepRunner.js`), so two sweeps never run at once, and the endpoint answers 409 if one is running.
 The sweep is idempotent per client, need and IST day, so extra triggers never double-post.
 
@@ -105,25 +105,20 @@ Writes:
 | `DISCORD_APPLICATION_ID` | Application id. |
 | `DISCORD_GUILD_ID` | Server id. |
 | `DISCORD_PRANJAL_USER_IDS` | Comma-separated Discord ids of the LinkedIn and cover letter assignees. |
-| `DISCORD_ONBOARDING_ENABLED` | Master switch. Defaults to false. |
-| `DISCORD_BOT_DRY_RUN` | Defaults to true. Records what would be sent without posting. |
-| `DISCORD_CRON_SECRET` | Required for the sweep route. Unset means 503, never open. Header `x-cron-secret` only. |
+| `DISCORD_ONBOARDING_ENABLED` | Optional brake. The bot is on by default; set `false` to stop the sweep. |
+| `DISCORD_BOT_DRY_RUN` | Optional brake. The bot posts by default; set `true` to plan without posting. |
+| `DISCORD_CRON_SECRET` | Only for calling the sweep route by hand. Unset means 503, never open. Header `x-cron-secret` only. |
 | `DISCORD_NEW_CLIENT_DAYS` | Age limit for a client to count as new. |
 
-The GitHub repo needs a secret `DISCORD_CRON_SECRET` with the same value.
-
 ## Go-live checklist
-1. Set all env vars on the host, keeping `DISCORD_ONBOARDING_ENABLED=false` and `DISCORD_BOT_DRY_RUN=true`.
-2. Deploy the backend.
+1. Set the token, public key, application id, guild id and `DISCORD_PRANJAL_USER_IDS` on the host.
+2. Deploy the backend. The bot is live from the code, no switch to flip.
 3. In the Discord developer portal, set the Interactions Endpoint URL to `https://<backend>/api/discord/interactions`. Discord sends a PING and the save succeeds only if signature checks pass.
 4. Fill `discordUserId` for the CSM team in the portal users.
-5. Run the "Discord Onboarding Cron" workflow with `workflow_dispatch` for a dry run.
-6. Review the summary counts and the `dry_run` rows in `discord_onboarding_alerts`.
-7. Set `DISCORD_BOT_DRY_RUN=false` and `DISCORD_ONBOARDING_ENABLED=true`, then redeploy.
-8. Watch the next 8:00 AM IST run in the Render logs (`[discord-onboarding] cron 8:00 IST: ...`).
+5. Watch the 8:00 AM IST run in the Render logs (`[discord-onboarding] cron 8:00 IST: ...`).
 
 ## Rollback
-Set `DISCORD_ONBOARDING_ENABLED=false` and redeploy.
+Set `DISCORD_ONBOARDING_ENABLED=false` on the host and redeploy, or `DISCORD_BOT_DRY_RUN=true` to keep planning without posting.
 The sweep stops posting, and existing buttons keep working until you also remove the bot from the server.
 To stop interaction handling, clear the Interactions Endpoint URL in the developer portal.
 
