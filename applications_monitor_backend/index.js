@@ -3,7 +3,8 @@ import express from 'express';
 import Stripe from 'stripe';
 import { registerDiscordRoutes } from './discordBot/discordRoutes.js';
 import { createSweepRunner, runSweepFromCron } from './discordBot/sweepRunner.js';
-import { createAutoOnboard, secretsEqual as autoOnboardSecretsEqual } from './utils/autoOnboard.js';
+import { createAutoOnboard, secretsEqual as autoOnboardSecretsEqual, DEFAULT_DASHBOARD_PASSWORD } from './utils/autoOnboard.js';
+import { lookupCrmEmail, countryFromPhone } from './utils/crmLookup.js';
 import { createDiscordApi } from './discordBot/discordApi.js';
 import { loadOnboardingConfig } from './discordBot/config.js';
 import { runOnboardingSweep } from './discordBot/onboardingSweep.js';
@@ -544,6 +545,8 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
 
   const session = event.data.object;
   const email = (session.client_reference_id || session.customer_details?.email || '').toLowerCase();
+  const stripePhone = session.customer_details?.phone || '';
+  const stripeName  = session.customer_details?.name  || '';
   const metadata = session.metadata || {};
   const type = metadata.type; // 'upgrade' or 'addon'
   const planTarget = metadata.plan; // e.g. 'professional', 'executive'
@@ -560,9 +563,32 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
   try {
     const existingClient = await ClientModel.findOne({ email }).lean();
     if (!existingClient) {
-      console.error(`Stripe webhook: client not found for email ${email}`);
-      // Still return 200 so Stripe doesn't retry
-      return res.status(200).json({ received: true, warning: 'client not found' });
+      // New client — not registered yet. Fire Discord sweep so the channel is
+      // created as soon as someone registers them via /api/internal/register-by-email.
+      // Store the pending payment so register-by-email can pick it up.
+      console.log(`💳 Stripe webhook: new payment from ${email} (${stripeName}) — awaiting registration`);
+      await mongoose.connection.db.collection('stripe_pending_registrations').updateOne(
+        { email },
+        {
+          $set: {
+            email,
+            name: stripeName,
+            phone: stripePhone,
+            planTarget,
+            currency,
+            amountPaid,
+            updatedAt: new Date(),
+          },
+        },
+        { upsert: true }
+      );
+      if (discordWebhookUrl) {
+        await fetch(discordWebhookUrl, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: `💳 **New Stripe Payment — Awaiting Registration**\n📧 ${email}\n👤 ${stripeName}\n📦 ${planTarget || '?'}\n💰 ${currency} ${amountPaid}\n\nUse \`/api/internal/register-by-email\` to register.` }),
+        }).catch(() => {});
+      }
+      return res.status(200).json({ received: true, status: 'pending_registration' });
     }
 
     if (type === 'upgrade' && planTarget) {
@@ -5889,6 +5915,89 @@ app.post('/api/internal/auto-onboard', async (req, res) => {
     return res.status(500).json({ status: 'failed', error: 'auto onboard failed' });
   }
 });
+// ── Register by email ────────────────────────────────────────────────────────
+// Flow: someone shares an email → backend looks up the pending Stripe payment,
+// looks up CRM email via phone+name, registers the client, returns credentials.
+// Protected by the same AUTO_ONBOARD_SECRET as /api/internal/auto-onboard.
+app.post('/api/internal/register-by-email', async (req, res) => {
+  const secret = process.env.AUTO_ONBOARD_SECRET || '';
+  if (!secret) return res.status(503).json({ error: 'not configured' });
+  if (!autoOnboardSecretsEqual(req.get('x-cron-secret'), secret)) return res.status(401).json({ error: 'unauthorized' });
+
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: 'email is required' });
+
+  try {
+    // 1. Look up pending Stripe payment for this email
+    const pending = await mongoose.connection.db
+      .collection('stripe_pending_registrations')
+      .findOne({ email });
+
+    if (!pending) {
+      return res.status(404).json({ error: `No pending Stripe payment found for ${email}` });
+    }
+
+    const { name: stripeName, phone: stripePhone, planTarget, currency, amountPaid } = pending;
+
+    // 2. Look up CRM email via phone + name from website DB
+    const crmEmail = await lookupCrmEmail({ phone: stripePhone, name: stripeName });
+    console.log(`[register-by-email] ${email} — CRM email: ${crmEmail || '(fallback to stripe email)'}`);
+
+    // 3. Derive country from phone prefix + currency
+    const clientCountry = countryFromPhone(stripePhone, currency);
+
+    // 4. Split name into first / last
+    const nameParts = String(stripeName || '').trim().split(/\s+/);
+    const firstName = nameParts[0] || '';
+    const lastName  = nameParts.slice(1).join(' ') || firstName;
+    const fullName  = `${firstName} ${lastName}`.trim();
+
+    // 5. Register the client via autoOnboard (idempotent, assigns manager round-robin)
+    const out = await autoOnboardClient({
+      email,
+      name: fullName,
+      planType: planTarget || 'Professional',
+      currency,
+      amountPaid,
+      country: clientCountry,
+      oldEmail: crmEmail || email,
+      source: 'register-by-email',
+    });
+
+    if (out.status === 'failed' || out.status === 'invalid' || out.status === 'bad_plan') {
+      return res.status(400).json({ error: out.error || out.status });
+    }
+
+    // 6. Update crmEmail on the client record if we found a different one
+    if (crmEmail && crmEmail !== email) {
+      await ClientModel.updateOne({ email }, { $set: { crmEmail } }, { runValidators: false });
+    }
+
+    // 7. Fire Discord sweep so channel is created immediately
+    runSweepFromCron({ run: runDiscordOnboardingOnce, label: `register-by-email ${email}` }).catch(() => {});
+
+    // 8. Clean up pending record
+    await mongoose.connection.db
+      .collection('stripe_pending_registrations')
+      .deleteOne({ email });
+
+    console.log(`✅ [register-by-email] registered ${email} (${out.status})`);
+
+    // 9. Return credentials
+    return res.status(200).json({
+      email,
+      password: DEFAULT_DASHBOARD_PASSWORD,
+      status: out.status, // 'created' or 'exists'
+      clientNumber: out.clientNumber,
+      dashboardManager: out.dashboardManager,
+    });
+
+  } catch (err) {
+    console.error('[register-by-email] error:', err?.message);
+    return res.status(500).json({ error: 'registration failed' });
+  }
+});
+
 app.post('/api/clients/addnumbers', addNumbersToClients);
 app.patch('/api/clients/:email/client-number', verifyToken, verifyAdmin, updateClientNumber);
 app.patch('/api/clients/:email/client-country', verifyToken, verifyAdmin, updateClientCountry);
