@@ -5968,9 +5968,12 @@ app.post('/api/internal/register-by-email', async (req, res) => {
       return res.status(400).json({ error: out.error || out.status });
     }
 
-    // 6. Update crmEmail on the client record if we found a different one
-    if (crmEmail && crmEmail !== email) {
-      await ClientModel.updateOne({ email }, { $set: { crmEmail } }, { runValidators: false });
+    // 6. Update crmEmail and clientCountry on the client record
+    const extraFields = {};
+    if (crmEmail && crmEmail !== email) extraFields.crmEmail = crmEmail;
+    if (clientCountry) extraFields.clientCountry = clientCountry;
+    if (Object.keys(extraFields).length) {
+      await ClientModel.updateOne({ email }, { $set: extraFields }, { runValidators: false });
     }
 
     // 7. Fire Discord sweep so channel is created immediately
