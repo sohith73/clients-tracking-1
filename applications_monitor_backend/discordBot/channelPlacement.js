@@ -20,15 +20,17 @@ export function slugify(s) {
 }
 
 /**
- * "5788-sohith" for a numbered client; "sohith-a1b2" (last 4 of the id) when there is no number yet.
- * @param {{clientNumber?: number|string|null, name?: string, email?: string, userId?: string, prefix?: string}} p
+ * "5788-sohith-executive-usa": number, first name, plan, country. A missing part is left out,
+ * so a client with no number yet gets "sohith-executive-usa-a1b2" (last 4 of the id keeps it unique).
+ * @param {{clientNumber?: number|string|null, name?: string, email?: string, userId?: string, plan?: string, country?: string, prefix?: string}} p
  */
-export function buildChannelName({ clientNumber, name, email, userId, prefix = '' }) {
-  const slug = slugify(name) || slugify(String(email || '').split('@')[0]) || 'client';
+export function buildChannelName({ clientNumber, name, email, userId, plan = '', country = '', prefix = '' }) {
+  const first = slugify(String(name ?? '').trim().split(/\s+/)[0]);
+  const slug = first || slugify(name) || slugify(String(email || '').split('@')[0]) || 'client';
   const hasNumber = clientNumber !== undefined && clientNumber !== null && String(clientNumber).trim() !== '';
   const num = hasNumber ? slugify(clientNumber) : '';
   const tail = !num ? slugify(String(userId || '').slice(-4)) : '';
-  const parts = [slugify(prefix), num, slug, tail].filter(Boolean);
+  const parts = [slugify(prefix), num, slug, slugify(plan), slugify(country), tail].filter(Boolean);
   return parts.join('-').slice(0, 100).replace(/-+$/g, '');
 }
 

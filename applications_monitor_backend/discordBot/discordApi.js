@@ -190,6 +190,12 @@ export function createDiscordApi({
       return request('GET', `/channels/${enc(channelId)}`);
     },
 
+    /** Renames a channel. Discord allows about 2 renames per 10 minutes per channel, so callers rename only on change. Needs Manage Channels. */
+    async renameChannel(channelId, name) {
+      assertId(channelId, 'channel id');
+      return request('PATCH', `/channels/${enc(channelId)}`, { body: { name: truncate(String(name ?? ''), 100) } });
+    },
+
     async createThread(channelId, { name, autoArchiveDuration = 10080 } = {}) {
       assertId(channelId, 'channel id');
       return request('POST', `/channels/${enc(channelId)}/threads`, {

@@ -187,3 +187,11 @@ test('invalid IDs reject with TypeError before any request', async () => {
   await assert.rejects(async () => api.postMessage('12345678', { content: 'x', allowedUserIds: ['evil'] }), TypeError);
   assert.equal(calls.length, 0);
 });
+
+test('renameChannel PATCHes only the name', async () => {
+  const { api, calls } = setup([res(200, { id: '12345678', name: 'x' })]);
+  await api.renameChannel('12345678', '5810-sohith-executive-usa');
+  assert.equal(calls[0].init.method, 'PATCH');
+  assert.deepEqual(calls[0].body, { name: '5810-sohith-executive-usa' });
+  await assert.rejects(async () => api.renameChannel('../x', 'a'), TypeError);
+});

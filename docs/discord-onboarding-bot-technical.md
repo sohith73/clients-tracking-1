@@ -18,7 +18,7 @@ Code lives in `applications_monitor_backend/discordBot/`.
 Everything is built lazily on the first request, so missing env vars never break boot.
 
 ## Sequential flow
-Every client gets their own text channel, named `<clientNumber>-<name>` (for example `5788-sohith`, or `<name>-<last 4 of id>` when the client has no number yet).
+Every client gets their own text channel, named `<clientNumber>-<firstname>-<plan>-<country>` (for example `5810-sohith-executive-usa`). The number and country come from the dashboard tracking record, the plan from the user. A missing part is left out, and a client with no number yet gets `<firstname>-<plan>-<country>-<last 4 of id>`. When a stored channel has an older name, the sweep renames it (one PATCH, only when the name changed).
 Channels live in categories named `client-onboarding`, `client-onboarding-2`, `client-onboarding-3` and so on.
 Discord allows at most 50 channels in one category, so the bot fills `client-onboarding`, and when it is full it creates `client-onboarding-2` and continues there.
 The category name, the 50 cap and the 25 new channels per run are constants in `discordBot/config.js`, not env vars.
