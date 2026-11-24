@@ -97,6 +97,15 @@ Writes:
 - `discord_client_threads` (owned by the sweep). The `threadId` field now holds the client's text channel id and `channelId` holds its category id; the names are kept to avoid a migration.
 - New field `discordUserId` on `tracking_portal_users`, filled by an admin. No index is needed for it at this size.
 
+## Auto onboarding on payment
+A paid client becomes a dashboard user without manual entry.
+The website backend calls `POST /api/internal/auto-onboard` (header `x-cron-secret`, env `AUTO_ONBOARD_SECRET` on both backends) when a CRM lead is marked paid or a Stripe payment arrives.
+`utils/autoOnboard.js` runs the existing `createOrUpdateClient` handler: user with the default password, tracking record with a number from the shared counter, onboarding ticket.
+CSM and dashboard manager are picked round robin (oldest `lastCsmAssignedAt` and `lastAssignedAt` first, one atomic update).
+It is idempotent by email and also skips a client whose CRM email already has a tracking record.
+An unknown plan is refused (HTTP 422) instead of guessed.
+The ticket stores the dashboard login, and the next 8:00 sweep shows it in the first message of the client's private channel.
+
 ## Environment variables
 | Variable | Purpose |
 | --- | --- |
@@ -108,6 +117,7 @@ Writes:
 | `DISCORD_ONBOARDING_ENABLED` | Optional brake. The bot is on by default; set `false` to stop the sweep. |
 | `DISCORD_BOT_DRY_RUN` | Optional brake. The bot posts by default; set `true` to plan without posting. |
 | `DISCORD_CRON_SECRET` | Only for calling the sweep route by hand. Unset means 503, never open. Header `x-cron-secret` only. |
+| `AUTO_ONBOARD_SECRET` | Shared secret for `POST /api/internal/auto-onboard`. Unset means 503. |
 | `DISCORD_NEW_CLIENT_DAYS` | Age limit for a client to count as new. |
 
 ## Go-live checklist

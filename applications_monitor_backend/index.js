@@ -3,6 +3,7 @@ import express from 'express';
 import Stripe from 'stripe';
 import { registerDiscordRoutes } from './discordBot/discordRoutes.js';
 import { createSweepRunner, runSweepFromCron } from './discordBot/sweepRunner.js';
+import { createAutoOnboard, secretsEqual as autoOnboardSecretsEqual } from './utils/autoOnboard.js';
 import { createDiscordApi } from './discordBot/discordApi.js';
 import { loadOnboardingConfig } from './discordBot/config.js';
 import { runOnboardingSweep } from './discordBot/onboardingSweep.js';
@@ -5859,6 +5860,31 @@ const updateClientJobright = async (req, res) => {
 };
 
 app.post('/api/clients', optionalVerifyToken, createOrUpdateClient);
+
+// Auto onboarding: the website backend calls this when a client is marked paid (CRM) or a payment arrives.
+// Secret-protected (x-cron-secret style), idempotent by email. Creates user + tracking + ticket, assigns CSM and manager by round robin.
+const autoOnboardClient = createAutoOnboard({
+  createClient: createOrUpdateClient,
+  UserModel,
+  ManagerModel,
+  NewUserModel,
+  ClientModel,
+  OnboardingJobModel,
+  planWriteFields,
+});
+app.post('/api/internal/auto-onboard', async (req, res) => {
+  const secret = process.env.AUTO_ONBOARD_SECRET || '';
+  if (!secret) return res.status(503).json({ error: 'not configured' });
+  if (!autoOnboardSecretsEqual(req.get('x-cron-secret'), secret)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const out = await autoOnboardClient(req.body || {});
+    const code = out.status === 'invalid' ? 400 : out.status === 'bad_plan' ? 422 : out.status === 'failed' ? 500 : 200;
+    return res.status(code).json(out);
+  } catch (e) {
+    console.error('[auto-onboard] error:', e?.message);
+    return res.status(500).json({ status: 'failed', error: 'auto onboard failed' });
+  }
+});
 app.post('/api/clients/addnumbers', addNumbersToClients);
 app.patch('/api/clients/:email/client-number', verifyToken, verifyAdmin, updateClientNumber);
 app.patch('/api/clients/:email/client-country', verifyToken, verifyAdmin, updateClientCountry);

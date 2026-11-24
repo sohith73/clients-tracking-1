@@ -48,7 +48,7 @@ export function createMongoDeps({ discord }) {
         .collection('onboardingjobs')
         .find(
           { clientEmail: { $in: emails } },
-          { projection: { clientEmail: 1, clientNumber: 1, status: 1, csmEmail: 1, csmName: 1, resumeMakerEmail: 1, resumeMakerName: 1, createdAt: 1 } }
+          { projection: { clientEmail: 1, clientNumber: 1, status: 1, csmEmail: 1, csmName: 1, resumeMakerEmail: 1, resumeMakerName: 1, dashboardCredentials: 1, createdAt: 1 } }
         )
         .toArray();
       // Most recent job per email.

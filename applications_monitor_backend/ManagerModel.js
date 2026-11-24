@@ -25,6 +25,11 @@ const managerSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  // Round robin for new paid clients (auto onboarding): oldest assignment goes next.
+  lastAssignedAt: {
+    type: Date,
+    default: null
+  },
   createdAt: {
     type: String,
     default: () => new Date().toLocaleString('en-US', 'Asia/Kolkata')

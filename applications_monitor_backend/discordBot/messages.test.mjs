@@ -143,3 +143,11 @@ test('final message: wording per plan, CSM tag or plain text, no button, no ment
   const evil = buildFinalMessage({ clientName: '@everyone <@999>', planType: 'Prime', needs: {}, csmDiscordId: CSM });
   assert.ok(!/@everyone|<@999>/.test(evil.content));
 });
+
+test('resume message shows the dashboard login only when there is one', () => {
+  const base = { clientName: 'Sohith', clientEmail: 's@x.com', userId: 'a'.repeat(24), csmDiscordId: '900', dateLabel: '24 Nov 2026' };
+  const withLogin = buildResumeMessage({ ...base, loginUsername: 's@x.com', loginPassword: 'pw123' });
+  assert.ok(withLogin.content.includes('\nDashboard login: s@x.com / pw123'));
+  assert.equal(buildResumeMessage({ ...base, loginUsername: 's@x.com', loginPassword: '' }).content.includes('Dashboard login'), false);
+  assert.equal(buildResumeMessage(base).content.includes('Dashboard login'), false);
+});

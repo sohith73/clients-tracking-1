@@ -125,7 +125,15 @@ function cleanIds(ids) {
  *   resumeMakerDiscordId?: string|null, dateLabel: string}} p
  * @returns {{content: string, components: object[], allowedUserIds: string[]}}
  */
-export function buildResumeMessage({ clientName, clientEmail, userId, csmDiscordId, csmName, resumeMakerDiscordId, dateLabel }) {
+/** Dashboard login shown in the client's private channel. Empty when there is no password to show. */
+function loginLine(username, password) {
+  const u = neutralizeMentions(String(username ?? '').trim()).slice(0, 120);
+  const p = neutralizeMentions(String(password ?? '').trim()).slice(0, 120);
+  if (!u || !p) return '';
+  return `\nDashboard login: ${u} / ${p}`;
+}
+
+export function buildResumeMessage({ clientName, clientEmail, userId, csmDiscordId, csmName, resumeMakerDiscordId, dateLabel, loginUsername, loginPassword }) {
   const csmId = csmDiscordId && /^\d+$/.test(String(csmDiscordId)) ? String(csmDiscordId) : null;
   const makerId = resumeMakerDiscordId && /^\d+$/.test(String(resumeMakerDiscordId)) ? String(resumeMakerDiscordId) : null;
   const tagId = makerId || csmId;
@@ -133,7 +141,7 @@ export function buildResumeMessage({ clientName, clientEmail, userId, csmDiscord
     ? `<@${tagId}>`
     : `CSM not matched: ${neutralizeMentions(csmName || 'unassigned')}`;
   return {
-    content: `Resume not made for ${who(clientName, clientEmail)}. ${dateLabel}. ${tagPart}${dashboardLine()}`,
+    content: `Resume not made for ${who(clientName, clientEmail)}. ${dateLabel}. ${tagPart}${dashboardLine()}${loginLine(loginUsername, loginPassword)}`,
     components: [{ type: 1, components: [button('Resume done', buildCustomId({ need: 'resume', userId, csmDiscordId: csmId }))] }],
     allowedUserIds: tagId ? [tagId] : [],
   };
