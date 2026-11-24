@@ -204,6 +204,8 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
           csmName,
           resumeMakerDiscordId: maker.userId,
           dateLabel,
+          loginUsername: w.onboardingJob?.dashboardCredentials?.username,
+          loginPassword: w.onboardingJob?.dashboardCredentials?.password,
         });
       } else {
         message = buildFollowUpMessage({

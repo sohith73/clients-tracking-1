@@ -38,6 +38,8 @@ export const UserSchema = new mongoose.Schema({
   roles: [{ type: String }],
   lastResumeAssignedAt: { type: Date, default: null },
   lastLinkedInAssignedAt: { type: Date, default: null },
+  // Round robin for new paid clients (auto onboarding): oldest assignment goes next.
+  lastCsmAssignedAt: { type: Date, default: null },
   isActive: {
     type: Boolean,
     required: true,
