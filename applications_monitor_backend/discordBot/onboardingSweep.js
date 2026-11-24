@@ -99,14 +99,19 @@ async function ensureClientChannel({ deps, config, user, onboardingJob, tracking
   return made.id;
 }
 
+const CURRENCY_COUNTRY = { GBP: 'uk', USD: 'us', AUD: 'au', CAD: 'ca', EUR: 'eu', INR: 'in' };
+
 function clientChannelName({ user, onboardingJob, tracking, userId }) {
+  const country = tracking?.clientCountry
+    || CURRENCY_COUNTRY[String(user.currency || '').toUpperCase()]
+    || '';
   return buildChannelName({
     clientNumber: tracking?.clientNumber ?? onboardingJob?.clientNumber,
     name: user.name,
     email: user.email,
     userId,
     plan: user.planType,
-    country: tracking?.clientCountry,
+    country,
   });
 }
 

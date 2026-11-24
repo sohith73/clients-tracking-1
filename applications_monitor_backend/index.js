@@ -588,8 +588,12 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
         };
       }
       await ClientModel.updateOne({ email }, upgradeOps, { runValidators: false });
-      await NewUserModel.updateOne({ email }, { $set: { planType: capitalizedPlan, updatedAt: currentDate } }, { runValidators: false });
+      await NewUserModel.updateOne({ email }, { $set: { planType: capitalizedPlan, currency, updatedAt: currentDate } }, { runValidators: false });
       console.log(`✅ Stripe webhook: upgraded ${email} to ${capitalizedPlan}`);
+
+      // Kick off the Discord onboarding sweep immediately so the client channel
+      // is created right away instead of waiting for the 8:00 AM cron.
+      runSweepFromCron({ run: runDiscordOnboardingOnce, label: `stripe-webhook ${email}` }).catch(() => {});
 
       if (discordWebhookUrl) {
         await fetch(discordWebhookUrl, {
