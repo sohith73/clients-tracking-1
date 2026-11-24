@@ -10,8 +10,11 @@ test('slugify and channel names', () => {
   assert.equal(slugify('Sohith Réddy!'), 'sohith-reddy');
   assert.equal(buildChannelName({ clientNumber: 5788, name: 'Sohith' }), '5788-sohith');
   assert.equal(buildChannelName({ clientNumber: '', name: 'Sohith', userId: 'aabbccddeeff' }), 'sohith-eeff');
-  assert.equal(buildChannelName({ name: '<@123> @everyone', clientNumber: 7 }), '7-123-everyone');
+  assert.equal(buildChannelName({ name: '<@123> @everyone', clientNumber: 7 }), '7-123');
   assert.equal(buildChannelName({ name: '', email: 'jane.doe@x.com', clientNumber: 9 }), '9-jane-doe');
+  assert.equal(buildChannelName({ clientNumber: 5810, name: 'Sohith Reddy', plan: 'Executive', country: 'USA' }), '5810-sohith-executive-usa');
+  assert.equal(buildChannelName({ clientNumber: 5810, name: 'Sohith', plan: 'Professional' }), '5810-sohith-professional');
+  assert.equal(buildChannelName({ name: 'Sohith', plan: 'Ignite', country: 'UK', userId: 'aabbccddeeff' }), 'sohith-ignite-uk-eeff');
   assert.equal(buildChannelName({ name: '日本', clientNumber: 9 }), '9-client');
   assert.equal(buildChannelName({ clientNumber: 1, name: 'x'.repeat(300) }).length <= 100, true);
   assert.equal(buildChannelName({ clientNumber: 1, name: 'test', prefix: 'test' }), 'test-1-test');

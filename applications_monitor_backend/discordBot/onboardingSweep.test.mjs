@@ -16,13 +16,14 @@ function cfg(extra = {}) {
 function client(id, over = {}) {
   return {
     user: { _id: id, name: `Client ${id}`, email: `${id}@x.com`, planType: 'Prime', createdAt: new Date('2026-11-10T00:00:00Z'), resumeLink: [], ...over.user },
-    onboardingJob: over.job ?? { clientNumber: 5, status: 'resume_in_progress', csmName: 'Sam Lee' },
+    onboardingJob: over.job ?? { clientNumber: 4 + (Number(String(id).replace(/\D/g, '')) || 1), status: 'resume_in_progress', csmName: 'Sam Lee' },
+    tracking: over.tracking ?? null,
     csmPortalUser: over.csm ?? null,
   };
 }
 
 function makeDeps(clients, opts = {}) {
-  const calls = { grant: [], post: [], createThread: [], createCategory: [], createChannel: [], unarchive: [], saveThread: [], mark: [] };
+  const calls = { rename: [], grant: [], post: [], createThread: [], createCategory: [], createChannel: [], unarchive: [], saveThread: [], mark: [] };
   const claimed = new Set();
   const threads = new Map(Object.entries(opts.threads || {}));
   const deps = {
@@ -34,8 +35,9 @@ function makeDeps(clients, opts = {}) {
       createThread: async () => { throw new Error('threads are no longer used'); },
       getChannel: async (id) => {
         if (opts.missingThreads?.includes(id)) throw Object.assign(new Error('Unknown Channel'), { status: 404 });
-        return { id, thread_metadata: { archived: Boolean(opts.archived?.includes(id)) } };
+        return { id, name: opts.channelNames?.[id], thread_metadata: { archived: Boolean(opts.archived?.includes(id)) } };
       },
+      renameChannel: async (id, name) => { if (opts.renameFails) throw new Error('rate limited'); calls.rename.push({ id, name }); },
       unarchiveThread: async (id) => { calls.unarchive.push(id); },
       postMessage: async (ch, body) => {
         if (opts.postFailsFor && body.content.includes(opts.postFailsFor)) throw new Error('boom');
@@ -99,7 +101,7 @@ test('unlinked resume posts one message with button and CSM mention', async () =
   assert.equal(body.components[0].components[0].label, 'Resume done');
   assert.deepEqual(body.allowedUserIds, ['900']);
   assert.deepEqual(calls.createCategory, ['client-onboarding']);
-  assert.equal(calls.createChannel[0].name, '5-client-u1');
+  assert.equal(calls.createChannel[0].name, '5-client-prime');
   assert.equal(calls.createChannel[0].parentId, 'cat1');
   assert.equal(calls.saveThread[0].threadId, 'th1');
   assert.equal(calls.mark.at(-1).status, 'sent');
@@ -303,4 +305,32 @@ test('private channels: created hidden from everyone, tagged users and bot allow
   assert.deepEqual(ow[0], { id: 'g1', type: 0, allow: '0', deny: '1024' });
   assert.deepEqual(ow.slice(1).map((o) => o.id).sort(), ['777777777777', '900900900900']);
   assert.deepEqual(h.calls.grant, [{ ch: 'th1', ids: ['900900900900'] }]);
+});
+
+test('channel name is number-firstname-plan-country, taken from the tracking record', async () => {
+  const h = makeDeps([client('u1', { user: { name: 'Sohith Reddy', planType: 'Executive' }, tracking: { clientNumber: 5810, clientCountry: 'USA' } })]);
+  await runOnboardingSweep({ deps: h.deps, config: cfg(), now: NOW });
+  assert.equal(h.calls.createChannel[0].name, '5810-sohith-executive-usa');
+});
+
+test('an existing channel with an old name is renamed, an up-to-date one is left alone', async () => {
+  const tracking = { clientNumber: 5810, clientCountry: 'UK' };
+  const a = makeDeps([client('u1', { user: { name: 'Sohith', planType: 'Executive' }, tracking })], { channelNames: { th9: '5810-sohith' } });
+  await a.deps.saveThread({ userId: 'u1', threadId: 'th9', channelId: 'cat1' });
+  await runOnboardingSweep({ deps: a.deps, config: cfg(), now: NOW });
+  assert.deepEqual(a.calls.rename, [{ id: 'th9', name: '5810-sohith-executive-uk' }]);
+  assert.equal(a.calls.createChannel.length, 0);
+
+  const b = makeDeps([client('u1', { user: { name: 'Sohith', planType: 'Executive' }, tracking })], { channelNames: { th9: '5810-sohith-executive-uk' } });
+  await b.deps.saveThread({ userId: 'u1', threadId: 'th9', channelId: 'cat1' });
+  await runOnboardingSweep({ deps: b.deps, config: cfg(), now: NOW });
+  assert.equal(b.calls.rename.length, 0);
+});
+
+test('a failed rename does not stop the post', async () => {
+  const h = makeDeps([client('u1')], { channelNames: { th9: 'old-name' }, renameFails: true });
+  await h.deps.saveThread({ userId: 'u1', threadId: 'th9', channelId: 'cat1' });
+  const r = await runOnboardingSweep({ deps: h.deps, config: cfg(), now: NOW });
+  assert.equal(r.posted, 1);
+  assert.equal(r.failed, 0);
 });

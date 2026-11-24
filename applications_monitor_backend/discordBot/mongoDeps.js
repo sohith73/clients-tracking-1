@@ -59,6 +59,15 @@ export function createMongoDeps({ discord }) {
         if (!prev || new Date(j.createdAt || 0) > new Date(prev.createdAt || 0)) jobByEmail.set(k, j);
       }
 
+      // The dashboard tracking record is the source of truth for the client number, and holds the country.
+      const trackingRows = emails.length
+        ? await db()
+            .collection('dashboardtrackings')
+            .find({ email: { $in: emails } }, { projection: { email: 1, clientNumber: 1, clientCountry: 1 } })
+            .toArray()
+        : [];
+      const trackingByEmail = new Map(trackingRows.map((t) => [lower(t.email), t]));
+
       const csmEmails = [...new Set([...jobByEmail.values()].map((j) => lower(j.csmEmail)).filter(Boolean))];
       const csms = csmEmails.length
         ? await db()
@@ -86,6 +95,7 @@ export function createMongoDeps({ discord }) {
         return {
           user,
           onboardingJob,
+          tracking: trackingByEmail.get(lower(user.email)) || null,
           csmPortalUser: csmByEmail.get(lower(onboardingJob?.csmEmail)) || null,
           resumeMakerPortalUser: makerByEmail.get(lower(onboardingJob?.resumeMakerEmail)) || null,
         };

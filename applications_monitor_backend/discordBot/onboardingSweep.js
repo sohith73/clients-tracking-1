@@ -56,11 +56,20 @@ function is404(e) {
  * (404), make a new one. `ctx` holds the cached guild channel list and the
  * number of channels created so far this run.
  */
-async function ensureClientChannel({ deps, config, user, onboardingJob, userId, ctx, viewerIds }) {
+async function ensureClientChannel({ deps, config, user, onboardingJob, tracking, userId, ctx, viewerIds }) {
   const stored = await deps.getThread(userId);
+  const wantedName = clientChannelName({ user, onboardingJob, tracking, userId });
   if (stored?.threadId) {
     try {
-      await deps.discord.getChannel(stored.threadId);
+      const existing = await deps.discord.getChannel(stored.threadId);
+      // Older channels were named without plan and country: bring them to the current format.
+      if (existing?.name && existing.name !== wantedName && typeof deps.discord.renameChannel === 'function') {
+        try {
+          await deps.discord.renameChannel(stored.threadId, wantedName);
+        } catch (e) {
+          console.error('[discord-onboarding] rename failed:', errMessage(e));
+        }
+      }
       return stored.threadId;
     } catch (e) {
       if (!is404(e)) throw e;
@@ -74,7 +83,7 @@ async function ensureClientChannel({ deps, config, user, onboardingJob, userId, 
     channels: ctx.channels,
     baseName: config.categoryName,
     max: config.categoryMaxChannels,
-    name: clientChannelName({ user, onboardingJob, userId }),
+    name: wantedName,
     topic: `Onboarding for ${String(user.name || 'client').slice(0, 80)}`,
     viewerIds,
     botUserId: config.botUserId,
@@ -90,12 +99,14 @@ async function ensureClientChannel({ deps, config, user, onboardingJob, userId, 
   return made.id;
 }
 
-function clientChannelName({ user, onboardingJob, userId }) {
+function clientChannelName({ user, onboardingJob, tracking, userId }) {
   return buildChannelName({
-    clientNumber: onboardingJob?.clientNumber,
+    clientNumber: tracking?.clientNumber ?? onboardingJob?.clientNumber,
     name: user.name,
     email: user.email,
     userId,
+    plan: user.planType,
+    country: tracking?.clientCountry,
   });
 }
 
@@ -220,7 +231,7 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
 
       if (dryRun) {
         for (const need of todo) {
-          summary.plan.push({ userId, email: user.email || '', need, channelName: clientChannelName({ user, onboardingJob: w.onboardingJob, userId }), csmMatched, resumeMakerMatched, wouldTag: message.allowedUserIds });
+          summary.plan.push({ userId, email: user.email || '', need, channelName: clientChannelName({ user, onboardingJob: w.onboardingJob, tracking: w.tracking, userId }), csmMatched, resumeMakerMatched, wouldTag: message.allowedUserIds });
         }
         used++;
         continue;
@@ -253,7 +264,7 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
       }
       try {
         if (!threadId) {
-          threadId = await ensureClientChannel({ deps, config, user, onboardingJob: w.onboardingJob, userId, ctx, viewerIds: message.allowedUserIds });
+          threadId = await ensureClientChannel({ deps, config, user, onboardingJob: w.onboardingJob, tracking: w.tracking, userId, ctx, viewerIds: message.allowedUserIds });
         }
         // Private channels: whoever this message tags must be able to see it (idempotent, also covers reused channels).
         await deps.discord.grantChannelAccess(threadId, message.allowedUserIds);
