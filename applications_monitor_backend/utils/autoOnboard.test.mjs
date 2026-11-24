@@ -5,8 +5,8 @@ import { createAutoOnboard, callHandler, secretsEqual, DEFAULT_DASHBOARD_PASSWOR
 
 const lean = (v) => ({ select: () => ({ lean: async () => v }), lean: async () => v });
 
-function setup({ user = null, tracking = null, csms = [], managers = [], handler } = {}) {
-  const calls = { create: [], jobUpdate: [], csmPick: 0, mgrPick: 0 };
+function setup({ user = null, tracking = null, csms = [], managers = [], handler, onReady } = {}) {
+  const calls = { create: [], jobUpdate: [], csmPick: 0, mgrPick: 0, order: [] };
   const rr = (list, key, counter) => ({
     findOneAndUpdate: (filter, upd) => ({
       lean: async () => {
@@ -25,9 +25,10 @@ function setup({ user = null, tracking = null, csms = [], managers = [], handler
     ManagerModel: rr(managers, 'lastAssignedAt', 'mgrPick'),
     NewUserModel: { findOne: () => lean(user) },
     ClientModel: { findOne: () => lean(tracking || { clientNumber: 5810 }) },
-    OnboardingJobModel: { updateOne: async (f, u) => { calls.jobUpdate.push({ f, u }); } },
+    OnboardingJobModel: { updateOne: async (f, u) => { calls.jobUpdate.push({ f, u }); calls.order?.push('csm saved'); } },
     planWriteFields: (v) => (/^executive$/i.test(String(v)) ? { planLabel: 'Executive' } : null),
     logger: { log() {}, warn() {} },
+    onReady,
   };
   // A tracking row exists only for emails the create handler already made.
   const made = new Set();
@@ -115,4 +116,44 @@ test('secretsEqual is strict and never true for an empty secret', () => {
   assert.equal(secretsEqual('abd', 'abc'), false);
   assert.equal(secretsEqual('', ''), false);
   assert.equal(secretsEqual(undefined, 'abc'), false);
+});
+
+test('Discord is triggered once, after the CSM is saved, with the dashboard email', async () => {
+  let calls;
+  const seen = [];
+  const s = setup({ csms: CSMS(), managers: MGRS(), onReady: (e) => { seen.push(e); calls.order.push('discord'); } });
+  calls = s.calls;
+  const r = await s.auto({ email: 'New@Lead.com', name: 'New Lead', planType: 'Executive' });
+  assert.equal(r.status, 'created');
+  assert.deepEqual(seen, ['new@lead.com']);
+  assert.deepEqual(calls.order, ['csm saved', 'discord']);
+});
+
+test('an existing client also triggers Discord, by the dashboard email not the CRM one', async () => {
+  const seen = [];
+  const s = setup({ tracking: { email: 'Real@Dash.com', clientNumber: 6077 }, onReady: (e) => seen.push(e) });
+  const r = await s.auto({ email: 'crm@lead.com', name: 'Crm Lead', planType: 'Executive' });
+  assert.deepEqual([r.status, r.dashboardEmail, r.clientNumber], ['exists', 'real@dash.com', 6077]);
+  assert.deepEqual(seen, ['real@dash.com']);
+});
+
+test('a failing or throwing Discord trigger never breaks onboarding, and bad input never triggers it', async () => {
+  const warnings = [];
+  const s = setup({ csms: CSMS(), managers: MGRS(), onReady: () => Promise.reject(new Error('discord down')) });
+  s.deps.logger.warn = (m) => warnings.push(m);
+  assert.equal((await s.auto({ email: 'a@b.com', name: 'A', planType: 'Executive' })).status, 'created');
+  const t = setup({ csms: CSMS(), managers: MGRS(), onReady: () => { throw new Error('sync boom'); } });
+  assert.equal((await t.auto({ email: 'c@d.com', name: 'C', planType: 'Executive' })).status, 'created');
+  const seen = [];
+  const u = setup({ onReady: (e) => seen.push(e), handler: async (req, res) => res.status(500).json({ error: 'db' }) });
+  assert.equal((await u.auto({ email: 'e@f.com', name: 'E', planType: 'Executive' })).status, 'failed');
+  assert.equal((await u.auto({ email: 'bad', name: 'E', planType: 'Executive' })).status, 'invalid');
+  assert.deepEqual(seen, []);
+});
+
+test('the create handler is told the call is automatic, so it does not trigger Discord before the CSM is set', async () => {
+  let flag;
+  const s = setup({ handler: async (req, res) => { flag = req.autoOnboard; res.status(200).json({}); } });
+  await s.auto({ email: 'a@b.com', name: 'A', planType: 'Executive' });
+  assert.equal(flag, true);
 });

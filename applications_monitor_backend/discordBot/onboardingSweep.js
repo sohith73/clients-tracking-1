@@ -11,7 +11,7 @@
  *     postMessage(channelId, { content, components, allowedUserIds }) -> { id }
  *     listGuildMembers(guildId) -> member[]
  *   }
- *   listCandidateClients({ since, excludePlans }) -> [{ user, onboardingJob|null, csmPortalUser|null, resumeMakerPortalUser|null }]
+ *   listCandidateClients({ since, excludePlans, email? }) -> [{ user, onboardingJob|null, csmPortalUser|null, resumeMakerPortalUser|null }]
  *   getThread(userId) -> { threadId, channelId } | null   // threadId is the client's text channel id
  *   saveThread({ userId, clientEmail, threadId, channelId, guildId })
  *   tryClaimAlert({ userId, need, istDay }) -> boolean
@@ -111,9 +111,11 @@ function clientChannelName({ user, onboardingJob, tracking, userId }) {
 }
 
 /**
- * @param {{deps: object, config: object, now?: Date}} p
+ * @param {{deps: object, config: object, now?: Date, onlyEmail?: string}} p
+ *   onlyEmail: run for that one client only (real-time trigger). Same rules, same alert
+ *   claims, so it can never double-post with the daily sweep.
  */
-export async function runOnboardingSweep({ deps, config, now = new Date() }) {
+export async function runOnboardingSweep({ deps, config, now = new Date(), onlyEmail = '' }) {
   if (!config.enabled) return { skipped: 'disabled' };
 
   const dryRun = config.dryRun !== false;
@@ -133,7 +135,7 @@ export async function runOnboardingSweep({ deps, config, now = new Date() }) {
   };
 
   const since = new Date(now.getTime() - config.newClientWindowDays * DAY_MS);
-  const raw = (await deps.listCandidateClients({ since, excludePlans: config.excludePlans })) || [];
+  const raw = (await deps.listCandidateClients({ since, excludePlans: config.excludePlans, ...(onlyEmail ? { email: onlyEmail } : {}) })) || [];
   const candidates = raw.filter(
     (c) =>
       c?.user &&

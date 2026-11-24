@@ -104,7 +104,16 @@ The website backend calls `POST /api/internal/auto-onboard` (header `x-cron-secr
 CSM and dashboard manager are picked round robin (oldest `lastCsmAssignedAt` and `lastAssignedAt` first, one atomic update).
 It is idempotent by email and also skips a client whose CRM email already has a tracking record.
 An unknown plan is refused (HTTP 422) instead of guessed.
-The ticket stores the dashboard login, and the next 8:00 sweep shows it in the first message of the client's private channel.
+The ticket stores the dashboard login, which the first message in the client's private channel shows.
+
+## Real-time posting
+The channel and first message appear as soon as the client is ready, not at the next 8:00 sweep.
+Three events trigger it: a payment or a BDA marking a lead paid (through auto-onboard, after the CSM is attached), and a client created by hand in the tracking portal.
+Each one runs the same sweep logic for that one client (`onlyEmail`), so it follows the same rules: plan needs, the daily alert claim, caps and `DISCORD_BOT_DRY_RUN`.
+All runs share one serial queue (`createSerialQueue`), so a real-time run waits for a running sweep and two runs never create the same channel.
+The trigger never throws and never fails the onboarding: if Discord is down, the 8:00 and 8:30 IST sweeps pick the client up as the fallback.
+An existing client (for example a hand-made one whose dashboard email differs from the CRM email) is also posted, by the dashboard email.
+Because the alert claim is per client, need and IST day, a real-time post and the 8:00 sweep on the same day never duplicate.
 
 ## Environment variables
 | Variable | Purpose |

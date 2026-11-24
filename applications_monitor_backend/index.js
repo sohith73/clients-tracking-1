@@ -2,7 +2,7 @@ import { attendanceRouter } from './attendance/router.js';
 import express from 'express';
 import Stripe from 'stripe';
 import { registerDiscordRoutes } from './discordBot/discordRoutes.js';
-import { createSweepRunner, runSweepFromCron } from './discordBot/sweepRunner.js';
+import { createSerialQueue, createSweepRunner, runClientFromTrigger, runSweepFromCron } from './discordBot/sweepRunner.js';
 import { createAutoOnboard, secretsEqual as autoOnboardSecretsEqual } from './utils/autoOnboard.js';
 import { createDiscordApi } from './discordBot/discordApi.js';
 import { loadOnboardingConfig } from './discordBot/config.js';
@@ -642,6 +642,10 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
 // schedules), plus the secret-protected HTTP endpoint, which also wakes a suspended instance.
 // All of them share one runner, so two sweeps can never run at the same time.
 let runDiscordOnboardingOnce = async () => { throw Object.assign(new Error('discord bot not configured'), { notConfigured: true }); };
+// Real-time: a payment, a BDA marking paid, or a new client posts in that client's channel right away.
+// Fire and forget (never throws); the 8:00 and 8:30 sweeps stay as the fallback. Same queue as the sweeps.
+const discordQueue = createSerialQueue();
+let triggerDiscordForClient = async () => null;
 {
   let discordState = null;
   const getDiscordState = () => {
@@ -713,7 +717,18 @@ let runDiscordOnboardingOnce = async () => { throw Object.assign(new Error('disc
     const state = getDiscordState();
     if (!state) throw Object.assign(new Error('discord bot not configured'), { notConfigured: true });
     return runOnboardingSweep({ deps: state.sweepDeps, config: state.config, now: new Date() });
-  });
+  }, discordQueue);
+  triggerDiscordForClient = (email, label = 'realtime') =>
+    runClientFromTrigger({
+      queue: discordQueue,
+      email,
+      label: `${label} ${String(email || '').slice(0, 60)}`,
+      run: async (e) => {
+        const state = getDiscordState();
+        if (!state) throw Object.assign(new Error('discord bot not configured'), { notConfigured: true });
+        return runOnboardingSweep({ deps: state.sweepDeps, config: state.config, now: new Date(), onlyEmail: e });
+      },
+    });
   registerDiscordRoutes(app, {
     express,
     getDeps: async () => getDiscordState()?.interactionDeps || null,
@@ -1533,6 +1548,9 @@ export const createOrUpdateClient = async (req, res) => {
       } catch (onbErr) {
         console.error('Onboarding job creation failed:', onbErr?.message || onbErr);
       }
+      // A client made by hand in the tracking portal gets its Discord channel now. Automatic creation
+      // (req.autoOnboard) triggers later itself, once the CSM is attached.
+      if (!req.autoOnboard) void triggerDiscordForClient(emailLower, 'realtime new client');
       return res.status(200).json({
         message: "✅ New client created successfully",
         newUser,
@@ -5871,6 +5889,7 @@ const autoOnboardClient = createAutoOnboard({
   ClientModel,
   OnboardingJobModel,
   planWriteFields,
+  onReady: (dashboardEmail) => triggerDiscordForClient(dashboardEmail, 'realtime payment'),
 });
 app.post('/api/internal/auto-onboard', async (req, res) => {
   const secret = process.env.AUTO_ONBOARD_SECRET || '';

@@ -334,3 +334,21 @@ test('a failed rename does not stop the post', async () => {
   assert.equal(r.posted, 1);
   assert.equal(r.failed, 0);
 });
+
+test('onlyEmail asks for that one client, posts once, and the daily sweep later does not repeat it', async () => {
+  const asked = [];
+  const { deps, calls } = makeDeps([client('u1')]);
+  const list = deps.listCandidateClients;
+  deps.listCandidateClients = async (q) => { asked.push(q.email); return list(q); };
+  const first = await runOnboardingSweep({ deps, config: cfg(), now: NOW, onlyEmail: 'u1@x.com' });
+  assert.equal(first.posted, 1);
+  assert.deepEqual(asked, ['u1@x.com']);
+  assert.equal(calls.createChannel.length, 1);
+  // The 8:00 sweep the same IST day: no query filter, and the claimed alert blocks a second post.
+  const daily = await runOnboardingSweep({ deps, config: cfg(), now: NOW });
+  assert.equal(asked[1], undefined);
+  assert.equal(daily.posted, 0);
+  assert.equal(daily.skippedAlreadyAlerted, 1);
+  assert.equal(calls.post.length, 1);
+  assert.equal(calls.createChannel.length, 1);
+});

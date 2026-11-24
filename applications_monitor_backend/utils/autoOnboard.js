@@ -42,7 +42,7 @@ export function callHandler(handler, body) {
       status(code) { this.statusCode = code; return this; },
       json(payload) { clearTimeout(timer); resolve({ status: this.statusCode, body: payload }); return this; },
     };
-    Promise.resolve(handler({ body, user: { email: 'auto-onboard@system', name: 'Auto onboard' } }, res)).catch((e) => {
+    Promise.resolve(handler({ body, autoOnboard: true, user: { email: 'auto-onboard@system', name: 'Auto onboard' } }, res)).catch((e) => {
       clearTimeout(timer);
       reject(e);
     });
@@ -75,12 +75,22 @@ export async function pickNextDashboardManager(ManagerModel, now = new Date()) {
 /**
  * @param {{createClient: Function, UserModel: object, ManagerModel: object, NewUserModel: object, ClientModel: object,
  *   OnboardingJobModel: object, planWriteFields: (v: unknown) => ({planLabel: string}|null), now?: () => Date,
+ *   onReady?: (dashboardEmail: string) => unknown,
  *   logger?: {log: Function, warn: Function}}} deps
  * @returns {(input: object) => Promise<{status: 'created'|'exists'|'invalid'|'bad_plan'|'failed', [k: string]: any}>}
  */
 export function createAutoOnboard(deps) {
   const { createClient, UserModel, ManagerModel, NewUserModel, ClientModel, OnboardingJobModel, planWriteFields } = deps;
   const now = deps.now || (() => new Date());
+  // Called with the dashboard email once the client is fully set up (or already was), to post in Discord right away.
+  // Fire and forget: a Discord problem must never fail the onboarding, the 8:00 sweep is the fallback.
+  const onReady = (dashboardEmail) => {
+    try {
+      Promise.resolve(deps.onReady?.(dashboardEmail)).catch((e) => logger.warn(`[auto-onboard] realtime Discord trigger failed: ${String(e?.message || e).slice(0, 150)}`));
+    } catch (e) {
+      logger.warn(`[auto-onboard] realtime Discord trigger failed: ${String(e?.message || e).slice(0, 150)}`);
+    }
+  };
   const logger = deps.logger || console;
 
   return async function autoOnboard(input = {}) {
@@ -99,7 +109,10 @@ export function createAutoOnboard(deps) {
       ClientModel.findOne({ $or: [{ email }, { crmEmail: email }] }).select('email clientNumber').lean(),
     ]);
     if (user || tracking) {
-      return { status: 'exists', email, clientNumber: tracking?.clientNumber ?? null };
+      // The dashboard login may differ from the CRM email (a hand-made client): the Discord post goes by the dashboard one.
+      const dashboardEmail = String(tracking?.email || email).toLowerCase();
+      onReady(dashboardEmail);
+      return { status: 'exists', email, dashboardEmail, clientNumber: tracking?.clientNumber ?? null };
     }
 
     const [csm, manager] = await Promise.all([pickNextCsm(UserModel, now()), pickNextDashboardManager(ManagerModel, now())]);
@@ -125,7 +138,10 @@ export function createAutoOnboard(deps) {
     const out = await callHandler(createClient, body);
     if (out.status !== 200) {
       // A parallel call may have created the client between our check and the create.
-      if (out.status === 400 && /already exists/i.test(String(out.body?.error || ''))) return { status: 'exists', email, clientNumber: null };
+      if (out.status === 400 && /already exists/i.test(String(out.body?.error || ''))) {
+        onReady(email);
+        return { status: 'exists', email, dashboardEmail: email, clientNumber: null };
+      }
       logger.warn(`[auto-onboard] create failed for ${email}: ${out.status} ${String(out.body?.error || '').slice(0, 200)}`);
       return { status: 'failed', error: String(out.body?.error || `create returned ${out.status}`).slice(0, 300) };
     }
@@ -138,6 +154,7 @@ export function createAutoOnboard(deps) {
       );
     }
     const created = await ClientModel.findOne({ email }).select('clientNumber').lean();
+    onReady(email);
     logger.log(`[auto-onboard] created ${email} number=${created?.clientNumber ?? '?'} csm=${csm?.email || '-'} manager=${manager?.name || '-'}`);
     return {
       status: 'created',

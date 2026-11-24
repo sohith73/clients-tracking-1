@@ -36,10 +36,18 @@ export function createMongoDeps({ discord }) {
   return {
     discord,
 
-    async listCandidateClients({ since, excludePlans }) {
+    async listCandidateClients({ since, excludePlans, email }) {
       const users = await db()
         .collection('users')
-        .find({ createdAt: { $gte: since }, planType: { $nin: excludePlans } }, { projection: USER_PROJECTION })
+        .find(
+          {
+            createdAt: { $gte: since },
+            planType: { $nin: excludePlans },
+            // One client (real-time trigger): exact email, any letter case.
+            ...(email ? { email: { $regex: `^${lower(email).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } } : {}),
+          },
+          { projection: USER_PROJECTION }
+        )
         .toArray();
       if (users.length === 0) return [];
 
