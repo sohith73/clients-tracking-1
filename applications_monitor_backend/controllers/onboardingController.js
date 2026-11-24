@@ -101,9 +101,16 @@ export async function getNextJobNumber() {
 const CLIENT_NUMBER_FLOOR = 5809;
 
 export async function getNextClientNumber() {
+  // $max and $inc on the same field in one update causes a conflict error in MongoDB.
+  // Apply $max first to ensure the floor, then $inc in a second atomic operation.
+  await ClientCounterModel.updateOne(
+    { _id: 'client_number', lastNumber: { $lt: CLIENT_NUMBER_FLOOR - 1 } },
+    { $set: { lastNumber: CLIENT_NUMBER_FLOOR - 1 } },
+    { upsert: true }
+  );
   const counter = await ClientCounterModel.findOneAndUpdate(
     { _id: 'client_number' },
-    { $max: { lastNumber: CLIENT_NUMBER_FLOOR - 1 }, $inc: { lastNumber: 1 } },
+    { $inc: { lastNumber: 1 } },
     { new: true, upsert: true }
   );
   return counter.lastNumber;
