@@ -99,10 +99,6 @@ export function createAutoOnboard(deps) {
     if (!EMAIL_RE.test(email)) return { status: 'invalid', error: 'a valid email is required' };
     if (!name) return { status: 'invalid', error: 'name is required' };
 
-    // Never guess the plan: a wrong plan sets the wrong application cap and price.
-    const plan = planWriteFields(input.planType);
-    if (!plan) return { status: 'bad_plan', error: `unrecognised plan "${String(input.planType || '').slice(0, 40)}"` };
-
     // Already a client under this email, or the CRM lead's email? Leave it alone.
     const [user, tracking] = await Promise.all([
       NewUserModel.findOne({ email }).select('_id').lean(),
@@ -114,6 +110,11 @@ export function createAutoOnboard(deps) {
       onReady(dashboardEmail);
       return { status: 'exists', email, dashboardEmail, clientNumber: tracking?.clientNumber ?? null };
     }
+
+    // Only a new client needs a plan. An existing client paying again (add-on, renewal) is never refused for its plan.
+    // Never guess the plan: a wrong plan sets the wrong application cap and price.
+    const plan = planWriteFields(input.planType);
+    if (!plan) return { status: 'bad_plan', error: `unrecognised plan "${String(input.planType || '').slice(0, 40)}"` };
 
     const [csm, manager] = await Promise.all([pickNextCsm(UserModel, now()), pickNextDashboardManager(ManagerModel, now())]);
     if (!csm) logger.warn('[auto-onboard] no active CSM to assign');

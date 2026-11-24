@@ -157,3 +157,14 @@ test('the create handler is told the call is automatic, so it does not trigger D
   await s.auto({ email: 'a@b.com', name: 'A', planType: 'Executive' });
   assert.equal(flag, true);
 });
+
+test('an existing client with an unknown plan is "exists", not refused; a new one is still refused', async () => {
+  const seen = [];
+  const a = setup({ user: { _id: 1 }, onReady: (e) => seen.push(e) });
+  assert.equal((await a.auto({ email: 'old@x.com', name: 'Old', planType: 'Custom add-on' })).status, 'exists');
+  assert.deepEqual(seen, ['old@x.com']);
+  const b = setup({ csms: CSMS(), managers: MGRS() });
+  assert.equal((await b.auto({ email: 'new@x.com', name: 'New', planType: 'Custom add-on' })).status, 'bad_plan');
+  assert.equal(b.calls.create.length, 0);
+  assert.equal(b.calls.csmPick + b.calls.mgrPick, 0);
+});
