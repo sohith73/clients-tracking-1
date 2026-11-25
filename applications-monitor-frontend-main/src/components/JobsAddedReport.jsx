@@ -35,6 +35,7 @@ const FILTERS = [
   { key: 'live', label: 'Adding now' },
   { key: 'problem', label: 'Problems' },
   { key: 'europe', label: 'Europe' },
+  { key: 'below', label: 'Below 7d avg' },
 ];
 
 const REFRESH_MS = 60 * 1000;
@@ -192,9 +193,16 @@ export default function JobsAddedReport() {
       if (filter === 'live') return cells.some((c) => c.state === 'running' || c.state === 'queued');
       if (filter === 'problem') return cells.some((c) => c.tone === 'bad' || c.tone === 'warn');
       if (filter === 'europe') return String(r.country).toLowerCase() === 'europe';
+      // Active clients whose jobs added this day are fewer than their 7-day average.
+      if (filter === 'below') return !r.paused && Number(r.avg7 || 0) > r.total;
       return true;
     });
   }, [data, query, filter, showPaused]);
+
+  const belowCount = useMemo(
+    () => (data?.rows || []).filter((r) => !r.paused && Number(r.avg7 || 0) > r.total).length,
+    [data],
+  );
 
   const totals = useMemo(() => {
     const all = (data?.rows || []).filter((r) => !r.paused);
@@ -252,7 +260,7 @@ export default function JobsAddedReport() {
           {FILTERS.map((f) => (
             <button key={f.key} type="button" onClick={() => setFilter(f.key)}
               className={`rounded-full px-3 py-1 text-xs font-semibold ${filter === f.key ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-              {f.label}
+              {f.label}{f.key === 'below' && data ? ` (${belowCount})` : ''}
             </button>
           ))}
         </div>
