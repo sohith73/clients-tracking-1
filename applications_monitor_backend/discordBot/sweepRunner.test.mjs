@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSweepRunner, runSweepFromCron } from './sweepRunner.js';
+import { createSerialQueue, createSweepRunner, runSweepFromCron } from './sweepRunner.js';
 
 const quiet = () => { const lines = []; return { lines, log: (...a) => lines.push(a.join(' ')), error: (...a) => lines.push('ERR ' + a.join(' ')) }; };
 
@@ -34,4 +34,25 @@ test('cron wrapper logs the summary, and never throws', async () => {
   assert.match(l.lines[3], /not configured/);
   assert.equal(await runSweepFromCron({ run: async () => { throw new Error('db down'); }, label: 'x', logger: l }), null);
   assert.match(l.lines[4], /^ERR .*db down/);
+});
+
+test('queued jobs wait for a running sweep, run in order, and a failing one does not block the next', async () => {
+  const queue = createSerialQueue();
+  const order = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const sweep = createSweepRunner(async () => { order.push('sweep start'); await gate; order.push('sweep end'); return 'swept'; }, queue);
+  const p1 = sweep();
+  const bad = queue.run(async () => { order.push('bad'); throw new Error('boom'); });
+  const good = queue.run(async () => { order.push('good'); return 'ok'; });
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(order, ['sweep start']);
+  assert.equal(queue.busy, true);
+  await assert.rejects(sweep(), (e) => e.busy === true);
+  release();
+  assert.equal(await p1, 'swept');
+  await assert.rejects(bad, /boom/);
+  assert.equal(await good, 'ok');
+  assert.deepEqual(order, ['sweep start', 'sweep end', 'bad', 'good']);
+  assert.equal(queue.busy, false);
 });

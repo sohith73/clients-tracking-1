@@ -2,7 +2,9 @@ import { attendanceRouter } from './attendance/router.js';
 import express from 'express';
 import Stripe from 'stripe';
 import { registerDiscordRoutes } from './discordBot/discordRoutes.js';
-import { createSweepRunner, runSweepFromCron } from './discordBot/sweepRunner.js';
+import { createSerialQueue, createSweepRunner, runSweepFromCron } from './discordBot/sweepRunner.js';
+import { notifyPaid, remindPaid } from './discordBot/paidNotice.js';
+import { createPaidNoticeDeps } from './discordBot/paidNoticeDeps.js';
 import { createAutoOnboard, secretsEqual as autoOnboardSecretsEqual, DEFAULT_DASHBOARD_PASSWORD } from './utils/autoOnboard.js';
 import { lookupCrmEmail, countryFromPhone } from './utils/crmLookup.js';
 import { createDiscordApi } from './discordBot/discordApi.js';
@@ -672,6 +674,10 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
 // schedules), plus the secret-protected HTTP endpoint, which also wakes a suspended instance.
 // All of them share one runner, so two sweeps can never run at the same time.
 let runDiscordOnboardingOnce = async () => { throw Object.assign(new Error('discord bot not configured'), { notConfigured: true }); };
+// Paid client with no dashboard yet: post "create the dashboard" for the dashboard people. Creates nothing.
+// Same queue as the sweeps, so a notice and a sweep never create the same channel at once.
+const discordQueue = createSerialQueue();
+let notifyPaidClient = async () => ({ status: 'failed', error: 'discord bot not configured' });
 {
   let discordState = null;
   const getDiscordState = () => {
@@ -680,7 +686,9 @@ let runDiscordOnboardingOnce = async () => { throw Object.assign(new Error('disc
     if (!token) return null;
     const config = loadOnboardingConfig(process.env);
     const discord = createDiscordApi({ token, fetchImpl: fetch });
-    const sweepDeps = createMongoDeps({ discord });
+    const paidNoticeDeps = createPaidNoticeDeps({ discord });
+    // The sweep adopts the channel made at payment time once the dashboard exists.
+    const sweepDeps = { ...createMongoDeps({ discord }), findNoticeChannel: paidNoticeDeps.findNoticeChannel, markNoticeDone: paidNoticeDeps.markDone };
     // Discord users who may click the buttons without a portal account: the
     // LinkedIn/cover letter people plus DISCORD_ALLOWED_CLICKER_IDS (comma
     // separated user IDs, digits only). They are never tagged by this list.
@@ -736,14 +744,29 @@ let runDiscordOnboardingOnce = async () => { throw Object.assign(new Error('disc
       },
       now: () => new Date(),
     };
-    discordState = { config, sweepDeps, interactionDeps };
+    discordState = { config, sweepDeps, paidNoticeDeps, interactionDeps };
     return discordState;
   };
   runDiscordOnboardingOnce = createSweepRunner(async () => {
     const state = getDiscordState();
     if (!state) throw Object.assign(new Error('discord bot not configured'), { notConfigured: true });
-    return runOnboardingSweep({ deps: state.sweepDeps, config: state.config, now: new Date() });
-  });
+    const now = new Date();
+    const summary = await runOnboardingSweep({ deps: state.sweepDeps, config: state.config, now });
+    // Daily reminder in the payment channel until the dashboard exists. A failure here never hides the sweep result.
+    try {
+      const reminded = await remindPaid({ deps: state.paidNoticeDeps, config: state.config, now });
+      if (reminded.checked) console.log(`[discord-onboarding] paid reminders: ${JSON.stringify(reminded)}`);
+    } catch (e) {
+      console.error('[discord-onboarding] paid reminders failed:', String(e?.message || e).slice(0, 200));
+    }
+    return summary;
+  }, discordQueue);
+  notifyPaidClient = (input) =>
+    discordQueue.run(async () => {
+      const state = getDiscordState();
+      if (!state) return { status: 'failed', error: 'discord bot not configured' };
+      return notifyPaid({ deps: state.paidNoticeDeps, config: state.config, input, now: new Date() });
+    });
   registerDiscordRoutes(app, {
     express,
     getDeps: async () => getDiscordState()?.interactionDeps || null,
@@ -1562,6 +1585,11 @@ export const createOrUpdateClient = async (req, res) => {
         });
       } catch (onbErr) {
         console.error('Onboarding job creation failed:', onbErr?.message || onbErr);
+      }
+      // A client made by hand in the portal continues in Discord right away (the payment channel is reused),
+      // not at the next 8:00 sweep. Skipped for register-by-email, which runs its own sweep after setting crmEmail.
+      if (req.user?.email !== 'auto-onboard@system') {
+        runSweepFromCron({ run: runDiscordOnboardingOnce, label: `new client ${emailLower}` }).catch(() => {});
       }
       return res.status(200).json({
         message: "✅ New client created successfully",
@@ -5891,8 +5919,8 @@ const updateClientJobright = async (req, res) => {
 
 app.post('/api/clients', optionalVerifyToken, createOrUpdateClient);
 
-// Auto onboarding: the website backend calls this when a client is marked paid (CRM) or a payment arrives.
-// Secret-protected (x-cron-secret style), idempotent by email. Creates user + tracking + ticket, assigns CSM and manager by round robin.
+// Used by /api/internal/register-by-email below. Creates user + tracking + ticket, assigns CSM and manager by round robin.
+// Nothing calls it automatically on payment: a paid client only produces a Discord notice (next route).
 const autoOnboardClient = createAutoOnboard({
   createClient: createOrUpdateClient,
   UserModel,
@@ -5902,23 +5930,31 @@ const autoOnboardClient = createAutoOnboard({
   OnboardingJobModel,
   planWriteFields,
 });
-app.post('/api/internal/auto-onboard', async (req, res) => {
+
+// Paid notice: the website backend calls this when a CRM lead is marked paid or a payment arrives.
+// It creates NO user and NO dashboard. It posts "create the dashboard" for the dashboard people in the client's
+// private Discord channel, once per email, and skips clients that already have a dashboard.
+// Secret-protected like the sweep route (header x-cron-secret, env AUTO_ONBOARD_SECRET). 503 when unset, never open.
+app.post('/api/internal/paid-notice', async (req, res) => {
   const secret = process.env.AUTO_ONBOARD_SECRET || '';
   if (!secret) return res.status(503).json({ error: 'not configured' });
   if (!autoOnboardSecretsEqual(req.get('x-cron-secret'), secret)) return res.status(401).json({ error: 'unauthorized' });
   try {
-    const out = await autoOnboardClient(req.body || {});
-    const code = out.status === 'invalid' ? 400 : out.status === 'bad_plan' ? 422 : out.status === 'failed' ? 500 : 200;
+    const b = req.body || {};
+    const out = await notifyPaidClient({
+      email: b.email, name: b.name, plan: b.planType, amount: b.amountPaid, currency: b.currency, country: b.country, source: b.source,
+    });
+    const code = out.status === 'invalid' ? 400 : out.status === 'failed' ? 503 : 200;
     return res.status(code).json(out);
   } catch (e) {
-    console.error('[auto-onboard] error:', e?.message);
-    return res.status(500).json({ status: 'failed', error: 'auto onboard failed' });
+    console.error('[paid-notice] error:', e?.message);
+    return res.status(500).json({ status: 'failed', error: 'paid notice failed' });
   }
 });
 // ── Register by email ────────────────────────────────────────────────────────
 // Flow: someone shares an email → backend looks up the pending Stripe payment,
 // looks up CRM email via phone+name, registers the client, returns credentials.
-// Protected by the same AUTO_ONBOARD_SECRET as /api/internal/auto-onboard.
+// Protected by the same AUTO_ONBOARD_SECRET as /api/internal/paid-notice.
 app.post('/api/internal/register-by-email', async (req, res) => {
   const secret = process.env.AUTO_ONBOARD_SECRET || '';
   if (!secret) return res.status(503).json({ error: 'not configured' });

@@ -76,6 +76,28 @@ async function ensureClientChannel({ deps, config, user, onboardingJob, tracking
       // Channel was deleted in Discord: fall through and make a new one.
     }
   }
+  // The client paid before the dashboard existed: a channel was made then ("create the dashboard"). Carry on in it.
+  if (typeof deps.findNoticeChannel === 'function') {
+    const notice = await deps.findNoticeChannel([user.email, tracking?.crmEmail]);
+    if (notice?.channelId) {
+      try {
+        const existing = await deps.discord.getChannel(notice.channelId);
+        if (existing?.name && existing.name !== wantedName && typeof deps.discord.renameChannel === 'function') {
+          try {
+            await deps.discord.renameChannel(notice.channelId, wantedName);
+          } catch (e) {
+            console.error('[discord-onboarding] rename failed:', errMessage(e));
+          }
+        }
+        await deps.saveThread({ userId, clientEmail: user.email || '', threadId: notice.channelId, channelId: '', guildId: config.guildId });
+        if (typeof deps.markNoticeDone === 'function') await deps.markNoticeDone(notice.email);
+        return notice.channelId;
+      } catch (e) {
+        if (!is404(e)) throw e;
+        // The payment channel was deleted: fall through and make a fresh one.
+      }
+    }
+  }
   if (!ctx.channels) ctx.channels = (await deps.discord.listGuildChannels(config.guildId)) || [];
   const made = await createClientChannel({
     discord: deps.discord,

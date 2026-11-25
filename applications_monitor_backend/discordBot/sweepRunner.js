@@ -1,21 +1,38 @@
 /**
- * One shared "only one sweep at a time" guard. The in-process cron and the HTTP
- * trigger both go through the same runner, so they can never run together.
- * A second caller gets an error with `busy: true` instead of starting a second sweep.
+ * Runs jobs one at a time, in arrival order. The sweeps and the paid notices go through one queue,
+ * so two of them can never create the same channel at once.
+ * @returns {{readonly busy: boolean, run: <T>(fn: () => Promise<T>) => Promise<T>}}
+ */
+export function createSerialQueue() {
+  let tail = Promise.resolve();
+  let pending = 0;
+  return {
+    get busy() {
+      return pending > 0;
+    },
+    run(fn) {
+      pending++;
+      const result = tail.then(() => fn());
+      const done = () => { pending--; };
+      result.then(done, done);
+      tail = result.catch(() => {});
+      return result;
+    },
+  };
+}
+
+/**
+ * The full sweep. A second full sweep while one is running (or queued behind a notice) gets an
+ * error with `busy: true` instead of piling up.
  * @template T
  * @param {() => Promise<T>} fn the real sweep
+ * @param {ReturnType<typeof createSerialQueue>} [queue] shared with the paid notices
  * @returns {() => Promise<T>}
  */
-export function createSweepRunner(fn) {
-  let running = false;
+export function createSweepRunner(fn, queue = createSerialQueue()) {
   return async function runOnce() {
-    if (running) throw Object.assign(new Error('sweep already running'), { busy: true });
-    running = true;
-    try {
-      return await fn();
-    } finally {
-      running = false;
-    }
+    if (queue.busy) throw Object.assign(new Error('sweep already running'), { busy: true });
+    return queue.run(fn);
   };
 }
 

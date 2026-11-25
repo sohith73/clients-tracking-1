@@ -151,3 +151,15 @@ test('resume message shows the dashboard login only when there is one', () => {
   assert.equal(buildResumeMessage({ ...base, loginUsername: 's@x.com', loginPassword: '' }).content.includes('Dashboard login'), false);
   assert.equal(buildResumeMessage(base).content.includes('Dashboard login'), false);
 });
+
+import { buildPaidMessage } from './messages.js';
+
+test('paid message names the client and plan, tags only the given people, and has no button', () => {
+  const m = buildPaidMessage({ clientName: 'Ann Lee', clientEmail: 'ann@x.com', plan: 'PRIME', amount: 99, currency: 'USD', country: 'USA', source: 'stripe', assigneeUserIds: ['111111111111111111', 'junk', '111111111111111111'], dateLabel: '25 Nov 2026' });
+  assert.equal(m.content, 'Payment received. Please create the dashboard for **Ann Lee** (ann@x.com). 25 Nov 2026. <@111111111111111111>\nPlan: PRIME. Paid: USD 99. Country: USA. Source: Stripe payment.\nCreate the client in the tracking portal with this email. Onboarding continues in this channel once it exists.');
+  assert.deepEqual(m.allowedUserIds, ['111111111111111111']);
+  assert.deepEqual(m.components, []);
+  const r = buildPaidMessage({ clientName: 'Ann', clientEmail: 'a@x.com', assigneeUserIds: ['222222222222222222'], dateLabel: 'd', reminder: true });
+  assert.match(r.content, /^Reminder: dashboard still not created for \*\*Ann\*\*/);
+  assert.match(r.content, /Plan: not recorded\. Paid: amount not recorded\./);
+});

@@ -97,14 +97,18 @@ Writes:
 - `discord_client_threads` (owned by the sweep). The `threadId` field now holds the client's text channel id and `channelId` holds its category id; the names are kept to avoid a migration.
 - New field `discordUserId` on `tracking_portal_users`, filled by an admin. No index is needed for it at this size.
 
-## Auto onboarding on payment
-A paid client becomes a dashboard user without manual entry.
-The website backend calls `POST /api/internal/auto-onboard` (header `x-cron-secret`, env `AUTO_ONBOARD_SECRET` on both backends) when a CRM lead is marked paid or a Stripe payment arrives.
-`utils/autoOnboard.js` runs the existing `createOrUpdateClient` handler: user with the default password, tracking record with a number from the shared counter, onboarding ticket.
-CSM and dashboard manager are picked round robin (oldest `lastCsmAssignedAt` and `lastAssignedAt` first, one atomic update).
-It is idempotent by email and also skips a client whose CRM email already has a tracking record.
-An unknown plan is refused (HTTP 422) instead of guessed.
-The ticket stores the dashboard login, and the next 8:00 sweep shows it in the first message of the client's private channel.
+## Paid notice (nothing is created)
+When a client pays, the bot only tells the dashboard people.
+It creates no user, no dashboard and no password.
+The website backend calls `POST /api/internal/paid-notice` (header `x-cron-secret`, env `AUTO_ONBOARD_SECRET` on both backends) when a CRM lead is marked paid by a BDA or admin, when a payment is stored, or when a Stripe checkout completes.
+`discordBot/paidNotice.js` then makes the client's private channel in `client-onboarding` and posts "Payment received. Please create the dashboard for X", tagging `DISCORD_PRANJAL_USER_IDS`.
+The message carries name, email, plan, amount, country and where the payment came from.
+Channel name before a client number exists: `firstname-plan-country-xxxx` (xxxx is a hash of the email).
+It posts once per email (unique row in `discord_paid_notices`, so the CRM, a payment and Stripe never double-post) and skips a client who already has a dashboard, by email or by `crmEmail`.
+HTTP 200 `notified` or `exists`, 400 invalid input, 503 when the bot is disabled, in dry run, has no Pranjal ids, or Discord failed (the caller retries), 401 bad secret.
+The 8:00 sweep adds one reminder per IST day in the same channel until the dashboard exists, for up to `DISCORD_NEW_CLIENT_DAYS` days.
+Once the dashboard exists (made by hand or by `register-by-email`), the normal onboarding flow adopts that channel instead of making a second one, renames it to `number-firstname-plan-country`, and carries on with the resume message there.
+A client created by hand in the portal triggers the sweep right away instead of waiting for 8:00.
 
 ## Environment variables
 | Variable | Purpose |
@@ -117,7 +121,7 @@ The ticket stores the dashboard login, and the next 8:00 sweep shows it in the f
 | `DISCORD_ONBOARDING_ENABLED` | Optional brake. The bot is on by default; set `false` to stop the sweep. |
 | `DISCORD_BOT_DRY_RUN` | Optional brake. The bot posts by default; set `true` to plan without posting. |
 | `DISCORD_CRON_SECRET` | Only for calling the sweep route by hand. Unset means 503, never open. Header `x-cron-secret` only. |
-| `AUTO_ONBOARD_SECRET` | Shared secret for `POST /api/internal/auto-onboard`. Unset means 503. |
+| `AUTO_ONBOARD_SECRET` | Shared secret for `POST /api/internal/paid-notice` and `register-by-email`. Unset means 503. |
 | `DISCORD_NEW_CLIENT_DAYS` | Age limit for a client to count as new. |
 
 ## Go-live checklist

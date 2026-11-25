@@ -63,7 +63,7 @@ export function createMongoDeps({ discord }) {
       const trackingRows = emails.length
         ? await db()
             .collection('dashboardtrackings')
-            .find({ email: { $in: emails } }, { projection: { email: 1, clientNumber: 1, clientCountry: 1 } })
+            .find({ email: { $in: emails } }, { projection: { email: 1, crmEmail: 1, clientNumber: 1, clientCountry: 1 } })
             .toArray()
         : [];
       const trackingByEmail = new Map(trackingRows.map((t) => [lower(t.email), t]));

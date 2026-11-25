@@ -205,3 +205,32 @@ export function buildFinalMessage({ clientName, clientEmail, planType, needs, cs
     allowedUserIds: csmIds,
   };
 }
+
+const SOURCE_LABEL = { 'crm-paid': 'CRM, lead marked paid', payment: 'payment received', stripe: 'Stripe payment' };
+
+/**
+ * Tells the dashboard people a client has paid and needs a dashboard. Nothing is created for them.
+ * Client data can never ping: only `assigneeUserIds` are mentioned.
+ * @param {{clientName: string, clientEmail: string, plan?: string, amount?: number|null, currency?: string, country?: string,
+ *   source?: string, assigneeUserIds: string[], dateLabel: string, reminder?: boolean}} p
+ * @returns {{content: string, components: object[], allowedUserIds: string[]}}
+ */
+export function buildPaidMessage({ clientName, clientEmail, plan, amount, currency, country, source, assigneeUserIds, dateLabel, reminder = false }) {
+  const ids = cleanIds(assigneeUserIds);
+  const tags = ids.map((id) => `<@${id}>`).join(' ');
+  const paid = amount ? `${neutralizeMentions(currency || '')} ${amount}`.trim() : 'amount not recorded';
+  const details = [
+    `Plan: ${neutralizeMentions(plan || 'not recorded')}`,
+    `Paid: ${paid}`,
+    country ? `Country: ${neutralizeMentions(country)}` : '',
+    source ? `Source: ${SOURCE_LABEL[source] || neutralizeMentions(String(source).slice(0, 40))}` : '',
+  ].filter(Boolean).join('. ');
+  const head = reminder
+    ? `Reminder: dashboard still not created for ${who(clientName, clientEmail)}. ${dateLabel}.`
+    : `Payment received. Please create the dashboard for ${who(clientName, clientEmail)}. ${dateLabel}.`;
+  return {
+    content: `${head} ${tags}\n${details}.\nCreate the client in the tracking portal with this email. Onboarding continues in this channel once it exists.`,
+    components: [],
+    allowedUserIds: ids,
+  };
+}

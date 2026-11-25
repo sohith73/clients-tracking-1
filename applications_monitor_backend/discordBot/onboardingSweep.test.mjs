@@ -334,3 +334,32 @@ test('a failed rename does not stop the post', async () => {
   assert.equal(r.posted, 1);
   assert.equal(r.failed, 0);
 });
+
+test('when the dashboard appears, the sweep continues in the channel made at payment, renames it, and makes no second one', async () => {
+  const { deps, calls } = makeDeps([client('u1', { tracking: { clientNumber: 6077, clientCountry: 'Australia', crmEmail: 'crm@x.com' } })], { channelNames: { pay1: 'u1-prime-a1b2' } });
+  const asked = [];
+  const done = [];
+  deps.findNoticeChannel = async (emails) => { asked.push(emails); return { email: 'crm@x.com', channelId: 'pay1' }; };
+  deps.markNoticeDone = async (e) => { done.push(e); };
+  const r = await runOnboardingSweep({ deps, config: cfg(), now: NOW });
+  assert.equal(r.posted, 1);
+  assert.deepEqual(asked, [['u1@x.com', 'crm@x.com']]);
+  assert.equal(calls.createChannel.length, 0);
+  assert.equal(calls.post[0].ch, 'pay1');
+  assert.deepEqual(calls.rename, [{ id: 'pay1', name: '6077-client-prime-australia' }]);
+  assert.equal(calls.saveThread[0].threadId, 'pay1');
+  assert.deepEqual(done, ['crm@x.com']);
+  // Next run uses the saved thread, not the notice again.
+  asked.length = 0;
+  await runOnboardingSweep({ deps, config: cfg(), now: new Date(NOW.getTime() + 24 * 3600_000) });
+  assert.equal(asked.length, 0);
+});
+
+test('a deleted payment channel falls back to a fresh channel', async () => {
+  const { deps, calls } = makeDeps([client('u1')], { missingThreads: ['pay1'] });
+  deps.findNoticeChannel = async () => ({ email: 'u1@x.com', channelId: 'pay1' });
+  const r = await runOnboardingSweep({ deps, config: cfg(), now: NOW });
+  assert.equal(r.posted, 1);
+  assert.equal(calls.createChannel.length, 1);
+  assert.equal(calls.post[0].ch, 'th1');
+});
