@@ -8307,7 +8307,10 @@ const getJobAddReport = async (req, res) => {
     const win = capDayWindow(day);
     if (!win) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
     const db = mongoose.connection.db;
-    const [countRows, savedRows, run, clients] = await Promise.all([
+    // 7-day average: jobs added in the 7 cap days BEFORE the selected day
+    // (same 10 PM - 10 PM windows, removed cards not counted, like the Total).
+    const avgStart = new Date(win.start.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const [countRows, savedRows, run, clients, avgRows] = await Promise.all([
       db.collection('jobdbs').aggregate([
         { $match: { _id: { $gte: objectIdAt(win.start), $lt: objectIdAt(win.end) } } },
         { $group: {
@@ -8318,7 +8321,13 @@ const getJobAddReport = async (req, res) => {
       db.collection('jobaddreports').find({ day }).toArray(),
       db.collection('jobaddruns').findOne({ _id: day }),
       ClientModel.find({}, { email: 1, name: 1, clientCountry: 1, status: 1, isPaused: 1 }).lean(),
+      db.collection('jobdbs').aggregate([
+        { $match: { _id: { $gte: objectIdAt(avgStart), $lt: objectIdAt(win.start) },
+                    currentStatus: { $not: /^(deleted|removed)/i } } },
+        { $group: { _id: { $toLower: { $ifNull: ['$userID', ''] } }, n: { $sum: 1 } } },
+      ], { allowDiskUse: true }).toArray(),
     ]);
+    const avg7 = new Map(avgRows.map((r) => [r._id, Math.round((r.n / 7) * 10) / 10]));
     const counts = new Map();
     const removed = new Map();
     for (const r of countRows) {
@@ -8336,10 +8345,12 @@ const getJobAddReport = async (req, res) => {
       const active = String(c.status || '').toLowerCase() === 'active';
       // Active clients always; anyone else only if something happened that day.
       if (!active && !counts.has(email) && !saved.has(email) && !removed.has(email)) continue;
-      rows.push(buildRow(
+      const row = buildRow(
         { email, name: c.name, country: c.clientCountry, paused: !!c.isPaused || !active },
         counts.get(email) || {}, saved.get(email) || null, runActive, removed.get(email) || 0,
-      ));
+      );
+      row.avg7 = avg7.get(email) || 0;
+      rows.push(row);
     }
     rows.sort((a, b) => (a.paused - b.paused) || (a.total - b.total) || a.name.localeCompare(b.name));
     res.json({ day, today: addWindowDayStamp(), window: win, run: banner, rows });
