@@ -8307,8 +8307,9 @@ const getJobAddReport = async (req, res) => {
     const win = capDayWindow(day);
     if (!win) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
     const db = mongoose.connection.db;
-    // 7-day average: jobs added in the 7 cap days BEFORE the selected day
-    // (same 10 PM - 10 PM windows, removed cards not counted, like the Total).
+    // 7-day average: same rule as Client Job Analysis (clientAddStats.js) -
+    // operations-created cards of ANY status (removed ones still count) in the
+    // 7 cap days (10 PM - 10 PM IST) BEFORE the selected day, divided by 7.
     const avgStart = new Date(win.start.getTime() - 7 * 24 * 60 * 60 * 1000);
     const [countRows, savedRows, run, clients, avgRows] = await Promise.all([
       db.collection('jobdbs').aggregate([
@@ -8322,8 +8323,7 @@ const getJobAddReport = async (req, res) => {
       db.collection('jobaddruns').findOne({ _id: day }),
       ClientModel.find({}, { email: 1, name: 1, clientCountry: 1, status: 1, isPaused: 1 }).lean(),
       db.collection('jobdbs').aggregate([
-        { $match: { _id: { $gte: objectIdAt(avgStart), $lt: objectIdAt(win.start) },
-                    currentStatus: { $not: /^(deleted|removed)/i } } },
+        { $match: { createdByRole: 'operations', _id: { $gte: objectIdAt(avgStart), $lt: objectIdAt(win.start) } } },
         { $group: { _id: { $toLower: { $ifNull: ['$userID', ''] } }, n: { $sum: 1 } } },
       ], { allowDiskUse: true }).toArray(),
     ]);
