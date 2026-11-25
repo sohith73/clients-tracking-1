@@ -273,14 +273,15 @@ export default function JobsAddedReport() {
               <th className="px-3 py-2.5">Client</th>
               <th className="px-3 py-2.5">Country</th>
               {PLATFORMS.map((p) => <th key={p.key} className="px-3 py-2.5">{p.label}</th>)}
+              <th className="px-3 py-2.5" title="Average jobs added per day over the 7 days before the selected day (10 PM to 10 PM IST windows).">7d Avg</th>
               <th className="px-3 py-2.5 min-w-[260px]">Summary</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {loading && !data ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No clients match.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No clients match.</td></tr>
             ) : rows.map((r) => (
               <tr key={r.email} className={r.paused ? 'bg-slate-50/60 text-slate-400' : ''}>
                 <td className="px-3 py-2.5 align-top">
@@ -289,6 +290,9 @@ export default function JobsAddedReport() {
                 </td>
                 <td className="px-3 py-2.5 align-top text-slate-700">{r.country || '—'}</td>
                 {PLATFORMS.map((p) => <Cell key={p.key} cell={r.cells[p.key]} />)}
+                <td className="px-3 py-2.5 align-top">
+                  <span className={`text-base font-bold tabular-nums ${r.avg7 >= 20 ? 'text-emerald-700' : 'text-amber-700'}`}>{Number(r.avg7 || 0).toFixed(1)}</span>
+                </td>
                 <td className="px-3 py-2.5 align-top text-xs leading-snug text-slate-700">
                   <span className={`mr-1.5 inline-block rounded px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${r.total >= 5 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{r.total}</span>
                   {r.summary}
